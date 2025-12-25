@@ -1,0 +1,50 @@
+Col_1 (A): GD.UCF204.WIN
+Col_2 (B): WIN UCF 204
+Col_3 (C): 32
+Col_4 (D): 1078
+Col_5 (E): 0
+Col_6 (F): Unnamed: 5
+Col_7 (G): 130
+Col_8 (H): 45.5
+Col_9 (I): 948
+Col_10 (J): 948.1
+Col_11 (K): 0.1
+Col_12 (L): Unnamed: 11
+Col_13 (M): 60
+Col_14 (N): 45.5.1
+Col_15 (O): 888
+Col_16 (P): 888.1
+Col_17 (Q): 0.2
+Col_18 (R): Unnamed: 17
+Col_19 (S): 80
+Col_20 (T): 45.5.2
+Col_21 (U): 808
+Col_22 (V): 808.1
+Col_23 (W): 0.3
+Col_24 (X): Unnamed: 23
+Col_25 (Y): 80.1
+Col_26 (Z): 45.5.3
+Col_27 (AA): 728
+Col_28 (AB): 0.4
+Col_29 (AC): 350
+Col_30 (AD): 728.1
+Col_31 (AE): 0.5
+Col_32 (AF): Unnamed: 31
+Col_33 (AG): 50
+Col_34 (AH): 45.5.4
+Col_35 (AI): 678
+Col_36 (AJ): 678.1
+Col_37 (AK): 0.6
+Col_38 (AL): Unnamed: 37
+Col_39 (AM): 0.7
+Col_40 (AN): 45.5.5
+Col_41 (AO): 678.2
+Col_42 (AP): 678.3
+Col_43 (AQ): 0.8
+Col_44 (AR): Unnamed: 43
+Col_45 (AS): 117
+Col_46 (AT): 45.5.6
+Col_47 (AU): 561
+Col_48 (AV): 561.1
+Col_49 (AW): 0.9
+Col_50 (AX): Unnamed: 49

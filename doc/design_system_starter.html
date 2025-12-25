@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Design System Starter Template</title>
+  <style>
+    /* ============================================
+       DESIGN SYSTEM FOUNDATION
+       Based on: Quy Tắc Thiết Kế Layout Web Chuẩn
+    ============================================ */
+
+    /* ===== CSS VARIABLES ===== */
+    :root {
+      /* Spacing System - 8pt Grid */
+      --space-0: 0;
+      --space-1: 8px;
+      --space-2: 16px;
+      --space-3: 24px;
+      --space-4: 32px;
+      --space-5: 40px;
+      --space-6: 48px;
+      --space-8: 64px;
+      --space-10: 80px;
+
+      /* Colors - NO PURE BLACK #000 */
+      --color-primary: #1a73e8;
+      --color-primary-hover: #185abc;
+      --color-primary-light: #e3f2fd;
+      
+      --color-success: #34a853;
+      --color-warning: #f9ab00;
+      --color-danger: #ea4335;
+      --color-info: #2196f3;
+      
+      /* Neutral Scale - NEVER USE #000000 */
+      --color-text-heading: #111827;
+      --color-text-main: #1f2933;
+      --color-text-muted: #6b7280;
+      --color-text-disabled: #9ca3af;
+      
+      --color-border-subtle: #e5e7eb;
+      --color-border-strong: #cbd5e1;
+      
+      --color-bg: #ffffff;
+      --color-bg-subtle: #f9fafb;
+      --color-bg-elevated: #ffffff;
+      
+      /* Focus */
+      --focus-ring-color: #2563eb;
+      --focus-ring-width: 2px;
+      --focus-ring-offset: 2px;
+
+      /* Typography */
+      --font-size-xs: 12px;
+      --font-size-sm: 13px;
+      --font-size-base: 14px;
+      --font-size-md: 16px;
+      --font-size-lg: 18px;
+      --font-size-xl: 20px;
+      --font-size-2xl: 24px;
+      --font-size-3xl: 32px;
+      --font-size-4xl: 48px;
+      
+      --line-height-tight: 1.2;
+      --line-height-normal: 1.5;
+      --line-height-relaxed: 1.6;
+      
+      --font-weight-normal: 400;
+      --font-weight-medium: 500;
+      --font-weight-semibold: 600;
+      --font-weight-bold: 700;
+
+      /* Component Sizes */
+      --button-height: 40px;
+      --button-height-lg: 48px;
+      --button-height-sm: 32px;
+      
+      --input-height: 40px;
+      
+      /* Border Radius */
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-full: 9999px;
+      
+      /* Shadows */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+      --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+      
+      /* Z-Index Scale */
+      --z-dropdown: 1000;
+      --z-sticky: 1020;
+      --z-modal-backdrop: 1040;
+      --z-modal: 1050;
+      --z-tooltip: 10000;
+    }
+
+    /* ===== RESET & BASE ===== */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      font-size: 16px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-size: var(--font-size-md);
+      line-height: var(--line-height-normal);
+      color: var(--color-text-main);
+      background: var(--color-bg-subtle);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* Typography */
+    h1, h2, h3, h4, h5, h6 {
+      color: var(--color-text-heading);
+      font-weight: var(--font-weight-semibold);
+      line-height: var(--line-height-tight);
+    }
+
+    h1 { font-size: var(--font-size-4xl); }
+    h2 { font-size: var(--font-size-3xl); }
+    h3 { font-size: var(--font-size-2xl); }
+    h4 { font-size: var(--font-size-xl); }
+
+    /* Focus States - MANDATORY */
+    :where(button, a, input, textarea, select):focus-visible {
+      outline: var(--focus-ring-width) solid var(--focus-ring-color);
+      outline-offset: var(--focus-ring-offset);
+    }
+
+    img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* ===== LAYOUT SYSTEM ===== */
+    .container {
+      max-width: 1200px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 0 var(--space-3);
+    }
+
+    .section {
+      padding: var(--space-6) 0;
+    }
+
+    /* Grid System */
+    .grid {
+      display: grid;
+      gap: var(--space-3);
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .grid-4 {
+      grid-template-columns: repeat(4, 1fr);
+    }
+
+    @media (max-width: 1023px) {
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 767px) {
+      .container { padding: 0 var(--space-2); }
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    }
+
+    /* ===== COMPONENTS ===== */
+
+    /* Button */
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-1);
+      height: var(--button-height);
+      padding: 0 var(--space-3);
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: var(--font-size-base);
+      font-weight: var(--font-weight-medium);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      font-family: inherit;
+    }
+
+    .button--primary {
+      background: var(--color-primary);
+      color: white;
+    }
+
+    .button--primary:hover {
+      background: var(--color-primary-hover);
+    }
+
+    .button--secondary {
+      background: var(--color-bg);
+      color: var(--color-text-main);
+      border: 1px solid var(--color-border-strong);
+    }
+
+    .button--secondary:hover {
+      background: var(--color-bg-subtle);
+    }
+
+    .button:disabled {
+      background: var(--color-text-disabled);
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    /* Input */
+    .input {
+      width: 100%;
+      height: var(--input-height);
+      padding: 0 var(--space-2);
+      border: 1px solid var(--color-border-subtle);
+      border-radius: var(--radius-sm);
+      font-size: var(--font-size-base);
+      color: var(--color-text-main);
+      transition: border-color 0.2s ease;
+      font-family: inherit;
+    }
+
+    .input:hover {
+      border-color: var(--color-border-strong);
+    }
+
+    .input:focus {
+      border-color: var(--color-primary);
+    }
+
+    .input::placeholder {
+      color: var(--color-text-disabled);
+    }
+
+    /* Card */
+    .card {
+      background: var(--color-bg);
+      border: 1px solid var(--color-border-subtle);
+      border-radius: var(--radius-md);
+      padding: var(--space-2);
+    }
+
+    .card--accent-blue {
+      border-left: 3px solid var(--color-info);
+      background: var(--color-bg-subtle);
+    }
+
+    .card--accent-orange {
+      border-left: 3px solid var(--color-warning);
+      background: var(--color-bg-subtle);
+    }
+
+    /* Section Header */
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      margin-bottom: var(--space-2);
+    }
+
+    .section-number {
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-full);
+      background: var(--color-primary);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: var(--font-weight-semibold);
+      font-size: var(--font-size-base);
+      flex-shrink: 0;
+    }
+
+    .section-title {
+      font-size: var(--font-size-lg);
+      font-weight: var(--font-weight-semibold);
+      color: var(--color-text-heading);
+      letter-spacing: 0.3px;
+    }
+
+    /* Field */
+    .field {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-1);
+    }
+
+    .field-icon {
+      width: 20px;
+      height: 20px;
+      color: var(--color-primary);
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .field-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .field-label {
+      font-size: var(--font-size-sm);
+      color: var(--color-text-muted);
+      margin-bottom: 2px;
+    }
+
+    .field-value {
+      font-size: var(--font-size-md);
+      color: var(--color-text-main);
+      font-weight: var(--font-weight-medium);
+    }
+
+    .field-value--empty {
+      color: var(--color-text-disabled);
+      font-style: italic;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: var(--z-modal-backdrop);
+      padding: var(--space-2);
+    }
+
+    .modal {
+      background: var(--color-bg);
+      border-radius: var(--radius-lg);
+      max-width: 900px;
+      width: 100%;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .modal-header {
+      padding: var(--space-3);
+      border-bottom: 1px solid var(--color-border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .modal-title {
+      font-size: var(--font-size-xl);
+      font-weight: var(--font-weight-semibold);
+      color: var(--color-text-heading);
+    }
+
+    .modal-close {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--color-text-muted);
+      font-size: 24px;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      transition: all 0.2s;
+    }
+
+    .modal-close:hover {
+      background: var(--color-bg-subtle);
+      color: var(--color-text-main);
+    }
+
+    .modal-body {
+      padding: var(--space-3);
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .modal-body > * + * {
+      margin-top: var(--space-4);
+    }
+
+    .modal-footer {
+      padding: var(--space-3);
+      border-top: 1px solid var(--color-border-subtle);
+      display: flex;
+      gap: var(--space-2);
+      justify-content: flex-end;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      top: var(--space-2);
+      right: var(--space-2);
+      min-width: 320px;
+      max-width: 480px;
+      padding: var(--space-2);
+      background: #323232;
+      color: white;
+      border-radius: var(--radius-sm);
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      z-index: var(--z-tooltip);
+    }
+
+    .toast--success { background: var(--color-success); }
+    .toast--warning { background: var(--color-warning); }
+    .toast--error { background: var(--color-danger); }
+
+    /* Utilities */
+    .text-muted {
+      color: var(--color-text-muted);
+    }
+
+    .text-center {
+      text-align: center;
+    }
+
+    .mt-1 { margin-top: var(--space-1); }
+    .mt-2 { margin-top: var(--space-2); }
+    .mt-3 { margin-top: var(--space-3); }
+    .mt-4 { margin-top: var(--space-4); }
+
+    .mb-1 { margin-bottom: var(--space-1); }
+    .mb-2 { margin-bottom: var(--space-2); }
+    .mb-3 { margin-bottom: var(--space-3); }
+    .mb-4 { margin-bottom: var(--space-4); }
+
+    /* Icon placeholder */
+    .icon {
+      width: 20px;
+      height: 20px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* Demo Styles */
+    .demo-section {
+      background: var(--color-bg);
+      border-radius: var(--radius-md);
+      padding: var(--space-4);
+      margin-bottom: var(--space-3);
+    }
+
+    .demo-title {
+      font-size: var(--font-size-lg);
+      font-weight: var(--font-weight-semibold);
+      color: var(--color-text-heading);
+      margin-bottom: var(--space-3);
+      padding-bottom: var(--space-2);
+      border-bottom: 2px solid var(--color-primary);
+    }
+
+    .color-swatch {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      padding: var(--space-1) var(--space-2);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--color-border-subtle);
+      font-size: var(--font-size-sm);
+      font-family: monospace;
+    }
+
+    .color-box {
+      width: 24px;
+      height: 24px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--color-border-subtle);
+    }
+
+    .code {
+      background: var(--color-bg-subtle);
+      padding: var(--space-1) var(--space-2);
+      border-radius: var(--radius-sm);
+      font-family: 'Courier New', monospace;
+      font-size: var(--font-size-sm);
+      color: var(--color-text-main);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="section text-center">
+      <h1>Design System Starter Template</h1>
+      <p class="text-muted mt-2">Tuân thủ 100% Quy Tắc Thiết Kế Layout Web Chuẩn</p>
+    </div>
+
+    <!-- Color System Demo -->
+    <div class="demo-section">
+      <h2 class="demo-title">1. Color System (NO Pure Black)</h2>
+      <div class="grid grid-3">
+        <div>
+          <h4 class="mb-2">Text Colors</h4>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div class="color-swatch">
+              <div class="color-box" style="background: var(--color-text-heading);"></div>
+              Heading: #111827
+            </div>
+            <div class="color-swatch">
+              <div class="color-box" style="background: var(--color-text-main);"></div>
+              Main: #1f2933
+            </div>
+            <div class="color-swatch">
+              <div class="color-box" style="background: var(--color-text-muted);"></div>
+              Muted: #6b7280
+            </div>
+          </div>
+        </div>
+        <div>
+          <h4 class="mb-2">Primary Colors</h4>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div class="color-swatch">
+              <div class="color-box" style="background: var(--color-primary);"></div>
+              Primary: #1a73e8
+            </div>
+            <div class="color-swatch">
+              <div class="color-box" style="background: var(--color-success);"></div>
+              Success: #34a853
+            </div>
+            <div class="color-swatch">
+              <div class="color-box" style="background: var(--color-danger);"></div>
+              Danger: #ea4335
+            </div>
+          </div>
+        </div>
+        <div>
+          <h4 class="mb-2">Background</h4>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div class="color-swatch">
+              <div class="color-box" style="background: var(--color-bg);"></div>
+              BG: #ffffff
+            </div>
+            <div class="color-swatch">
+              <div class="color-box" style="background: var(--color-bg-subtle);"></div>
+              BG Subtle: #f9fafb
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-3" style="padding: 12px; background: #fff3cd; border-left: 4px solid #ff9800; border-radius: 4px;">
+        <strong>⚠️ Quy tắc quan trọng:</strong> KHÔNG BAO GIỜ dùng <code style="background: #ffe0e0; padding: 2px 6px; border-radius: 3px;">#000000</code>
+      </div>
+    </div>
+
+    <!-- Spacing System -->
+    <div class="demo-section">
+      <h2 class="demo-title">2. Spacing System (8pt Grid)</h2>
+      <div class="grid grid-4">
+        <div class="code">--space-1: 8px</div>
+        <div class="code">--space-2: 16px</div>
+        <div class="code">--space-3: 24px</div>
+        <div class="code">--space-4: 32px</div>
+        <div class="code">--space-5: 40px</div>
+        <div class="code">--space-6: 48px</div>
+        <div class="code">--space-8: 64px</div>
+        <div class="code">--space-10: 80px</div>
+      </div>
+      <p class="text-muted mt-3">✅ Tất cả margin, padding, gap phải theo hệ này</p>
+    </div>
+
+    <!-- Button Components -->
+    <div class="demo-section">
+      <h2 class="demo-title">3. Buttons (Height: 40px)</h2>
+      <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+        <button class="button button--primary">Primary Button</button>
+        <button class="button button--secondary">Secondary Button</button>
+        <button class="button button--primary" disabled>Disabled Button</button>
+      </div>
+      <p class="text-muted mt-3">✅ Height: 40-48px | Padding: 0 24px | Gap: 8-16px</p>
+    </div>
+
+    <!-- Form Components -->
+    <div class="demo-section">
+      <h2 class="demo-title">4. Form Components</h2>
+      <div class="grid grid-2">
+        <div>
+          <label class="field-label" style="display: block; margin-bottom: 4px;">Email</label>
+          <input type="email" class="input" placeholder="user@example.com">
+        </div>
+        <div>
+          <label class="field-label" style="display: block; margin-bottom: 4px;">Password</label>
+          <input type="password" class="input" placeholder="••••••••">
+        </div>
+      </div>
+      <p class="text-muted mt-3">✅ Input height match button | Label-input: 4-8px | Focus state required</p>
+    </div>
+
+    <!-- Layout 2 Columns Demo -->
+    <div class="demo-section">
+      <h2 class="demo-title">5. Layout 2 Cột (Học Vấn & Chứng Chỉ)</h2>
+      
+      <div class="grid grid-2">
+        <!-- Cột 1: Học Vấn -->
+        <div>
+          <div class="section-header">
+            <div class="section-number">3</div>
+            <h3 class="section-title">HỌC VẤN</h3>
+          </div>
+          <div class="card card--accent-blue">
+            <div style="font-weight: 600; font-size: 15px; margin-bottom: 8px;">Trường chưa cập nhật</div>
+            <div style="font-size: 13px; color: var(--color-text-muted); margin-bottom: 4px;">12/12</div>
+            <div style="font-size: 13px; color: var(--color-text-muted);">2028</div>
+          </div>
+        </div>
+
+        <!-- Cột 2: Chứng Chỉ -->
+        <div>
+          <div class="section-header">
+            <div class="section-number">4</div>
+            <h3 class="section-title">CHỨNG CHỈ</h3>
+          </div>
+          <div class="card card--accent-orange">
+            <div style="font-weight: 600; font-size: 15px; margin-bottom: 8px;">Cầu lông</div>
+            <div class="field-value--empty">N/A</div>
+          </div>
+          <div class="card card--accent-orange mt-2">
+            <div class="field-value--empty">N/A</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-3" style="padding: 12px; background: #e8f5e9; border-left: 4px solid #34a853; border-radius: 4px;">
+        <strong>✅ Quy tắc:</strong> Section numbers (3 & 4) cùng hàng | Cards cùng cột grid | Gap 24px | Border-left 3px
+      </div>
+    </div>
+
+    <!-- Field with Icon -->
+    <div class="demo-section">
+      <h2 class="demo-title">6. Fields with Icons</h2>
+      <div class="grid grid-3">
+        <div class="field">
+          <svg class="field-icon icon" viewBox="0 0 24 24">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+            <polyline points="22,6 12,13 2,6"/>
+          </svg>
+          <div class="field-content">
+            <div class="field-label">Email</div>
+            <div class="field-value">user@example.com</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <svg class="field-icon icon" viewBox="0 0 24 24">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+          </svg>
+          <div class="field-content">
+            <div class="field-label">Số điện thoại</div>
+            <div class="field-value field-value--empty">---</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <svg class="field-icon icon" viewBox="0 0 24 24">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+            <circle cx="12" cy="10" r="3"/>
+          </svg>
+          <div class="field-content">
+            <div class="field-label">Địa chỉ</div>
+            <div class="field-value field-value--empty">---</div>
+          </div>
+        </div>
+      </div>
+      <p class="text-muted mt-3">✅ Icon-text gap: 8px | Icon primary color | Empty state: muted + italic</p>
+    </div>
+
+    <!-- Demo Modal Button -->
+    <div class="demo-section">
+      <h2 class="demo-title">7. Modal Example</h2>
+      <button class="button button--primary" onclick="showModal()">Open Modal Demo</button>
+    </div>
+
+    <!-- Usage Guide -->
+    <div class="demo-section">
+      <h2 class="demo-title">📖 Hướng Dẫn Sử Dụng</h2>
+      <ol style="line-height: 2; padding-left: 24px;">
+        <li><strong>Copy toàn bộ file này</strong> làm base cho dự án</li>
+        <li><strong>Sử dụng CSS variables</strong>: <code class="code">var(--space-2)</code>, <code class="code">var(--color-primary)</code></li>
+        <li><strong>Tuân thủ 8pt grid</strong>: Spacing luôn là bội số 8 (8, 16, 24, 32...)</li>
+        <li><strong>KHÔNG dùng #000</strong>: Dùng <code class="code">var(--color-text-main)</code></li>
+        <li><strong>Focus states bắt buộc</strong>: Tất cả interactive elements phải có outline</li>
+        <li><strong>Button/Input height</strong>: 40-48px</li>
+        <li><strong>Layout 2 cột</strong>: Dùng <code class="code">grid grid-2</code>, gap 24px</li>
+      </ol>
+    </div>
+
+    <!-- Validation Script Info -->
+    <div class="demo-section">
+      <h2 class="demo-title">🔍 Validation Tool</h2>
+      <p class="mb-2">Mở <strong>Console</strong> (F12) và gõ:</p>
+      <div class="code" style="display: block; padding: 16px;">validateDesign()</div>
+      <p class="text-muted mt-2">Tool sẽ kiểm tra: Pure black usage, spacing violations, button heights, focus states</p>
+      <button class="button button--primary mt-2" onclick="validateDesign()">Run Validation Now</button>
+    </div>
+  </div>
+
+  <!-- Modal Demo (Hidden by default) -->
+  <div id="modalDemo" class="modal-overlay" style="display: none;" onclick="hideModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="modal-title">Chi Tiết Ứng Viên</h3>
+        <button class="modal-close" onclick="hideModal()" aria-label="Close">×</button>
+      </div>
+      
+      <div class="modal-body">
+        <!-- Section 1 -->
+        <div>
+          <div class="section-header">
+            <div class="section-number">1</div>
+            <h4 class="section-title">THÔNG TIN CƠ BẢN</h4>
+          </div>
+          
+          <div class="grid grid-3">
+            <div class="field">
+              <svg class="field-icon icon" viewBox="0 0 24 24">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                <polyline points="22,6 12,13 2,6"/>
+              </svg>
+              <div class="field-content">
+                <div class="field-label">Email</div>
+                <div class="field-value">ancldt85@gmail.com</div>
+              </div>
+            </div>
+
+            <div class="field">
+              <svg class="field-icon icon" viewBox="0 0 24 24">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+              <div class="field-content">
+                <div class="field-label">Số điện thoại</div>
+                <div class="field-value field-value--empty">---</div>
+              </div>
+            </div>
+
+            <div class="field">
+              <svg class="field-icon icon" viewBox="0 0 24 24">
+                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+              </svg>
+              <div class="field-content">
+                <div class="field-label">Vị trí tuyển</div>
+                <div class="field-value">Marketing Production</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 2 & 3: Layout 2 Cột -->
+        <div class="grid grid-2">
+          <div>
+            <div class="section-header">
+              <div class="section-number">2</div>
+              <h4 class="section-title">HỌC VẤN</h4>
+            </div>
+            <div class="card card--accent-blue">
+              <div style="font-weight: 600; font-size: 15px; margin-bottom: 8px;">Trường chưa cập nhật</div>
+              <div style="font-size: 13px; color: var(--color-text-muted); margin-bottom: 4px;">12/12</div>
+              <div style="font-size: 13px; color: var(--color-text-muted);">2028</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="section-header">
+              <div class="section-number">3</div>
+              <h4 class="section-title">CHỨNG CHỈ</h4>
+            </div>
+            <div class="card card--accent-orange">
+              <div style="font-weight: 600; font-size: 15px; margin-bottom: 8px;">Cầu lông</div>
+              <div class="field-value--empty">N/A</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="button button--secondary" onclick="hideModal()">Hủy</button>
+        <button class="button button--primary" onclick="showToast()">Lưu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Demo (Hidden by default) -->
+  <div id="toastDemo" class="toast toast--success" style="display: none;">
+    ✓ Lưu thành công!
+  </div>
+
+  <script>
+    /* ==========================================
+       HELPER FUNCTIONS
+    ========================================== */
+    
+    function showModal() {
+      document.getElementById('modalDemo').style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+    }
+
+    function hideModal(event) {
+      if (!event || event.target === event.currentTarget) {
+        document.getElementById('modalDemo').style.display = 'none';
+        document.body.style.overflow = 'auto';
+      }
+    }
+
+    function showToast() {
+      const toast = document.getElementById('toastDemo');
+      toast.style.display = 'flex';
+      setTimeout(() => {
+        toast.style.display = 'none';
+      }, 3000);
+      hideModal();
+    }
+
+    /* ==========================================
+       DESIGN VALIDATION TOOL
+    ========================================== */
+    
+    function validateDesign() {
+      console.log('🔍 Bắt đầu kiểm tra Design System Compliance...\n');
+      
+      const errors = [];
+      const warnings = [];
+      
+      // 1. Check Pure Black
+      const allElements = document.querySelectorAll('*');
+      allElements.forEach(el => {
+        const color = window.getComputedStyle(el).color;
+        if (color === 'rgb(0, 0, 0)') {
+          errors.push(`❌ PURE BLACK DETECTED: ${el.tagName}.${el.className}`);
+        }
+      });
+      
+      // 2. Check Spacing (8pt grid)
+      allElements.forEach(el => {
+        const style = window.getComputedStyle(el);
+        const paddingTop = parseInt(style.paddingTop);
+        const marginTop = parseInt(style.marginTop);
+        
+        if (paddingTop > 0 && paddingTop % 8 !== 0) {
+          warnings.push(`⚠️ Padding không theo 8pt grid: ${el.tagName}.${el.className} - padding-top: ${paddingTop}px`);
+        }
+        if (marginTop > 0 && marginTop % 8 !== 0 && marginTop !== 2) { // Allow 2px for minor adjustments
+          warnings.push(`⚠️ Margin không theo 8pt grid: ${el.tagName}.${el.className} - margin-top: ${marginTop}px`);
+        }
+      });
+      
+      // 3. Check Button Heights
+      const buttons = document.querySelectorAll('button, .button');
+      buttons.forEach(btn => {
+        const height = btn.offsetHeight;
+        if (height !== 40 && height !== 48 && height !== 32) {
+          warnings.push(`⚠️ Button height không chuẩn: ${btn.textContent.trim()} - ${height}px (nên là 32, 40 hoặc 48px)`);
+        }
+      });
+      
+      // 4. Check Focus States
+      const focusableElements = document.querySelectorAll('button, a, input, select, textarea');
+      let missingFocusCount = 0;
+      focusableElements.forEach(el => {
+        // This is a basic check, actual focus state is checked via CSS
+        const computedStyle = window.getComputedStyle(el);
+        if (computedStyle.outlineStyle === 'none' && !el.classList.contains('modal-close')) {
+          missingFocusCount++;
+        }
+      });
+      
+      // Display Results
+      console.log('═══════════════════════════════════════');
+      console.log('📊 KẾT QUẢ KIỂM TRA');
+      console.log('═══════════════════════════════════════\n');
+      
+      if (errors.length === 0 && warnings.length === 0) {
+        console.log('✅ HOÀN HẢO! Không phát hiện lỗi nào.');
+        console.log('🎉 Design System tuân thủ 100% quy định!\n');
+      } else {
+        if (errors.length > 0) {
+          console.log(`❌ ERRORS (${errors.length}):`);
+          errors.forEach(err => console.log('  ' + err));
+          console.log('');
+        }
+        
+        if (warnings.length > 0) {
+          console.log(`⚠️ WARNINGS (${warnings.length}):`);
+          warnings.slice(0, 10).forEach(warn => console.log('  ' + warn));
+          if (warnings.length > 10) {
+            console.log(`  ... và ${warnings.length - 10} warnings khác`);
+          }
+          console.log('');
+        }
+      }
+      
+      console.log('═══════════════════════════════════════');
+      console.log('📋 SUMMARY:');
+      console.log(`   Errors: ${errors.length}`);
+      console.log(`   Warnings: ${warnings.length}`);
+      console.log(`   Elements checked: ${allElements.length}`);
+      console.log('═══════════════════════════════════════\n');
+      
+      return {
+        errors,
+        warnings,
+        passed: errors.length === 0
+      };
+    }
+
+    // Auto-run validation on load (optional)
+    window.addEventListener('load', () => {
+      console.log('💡 Gõ validateDesign() trong console để kiểm tra design compliance');
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        hideModal();
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+
+--- HOST: https://actapp.misa.vn ---
+   > Test: RPC get_dictionary (https://actapp.misa.vn/apir/sync/actopen/get_dictionary)
+     Status: 400
+     [FAIL] Body: 
+   > Test: REST Unit (https://actapp.misa.vn/api/v1/Unit)
+     Status: 404
+     [FAIL] Body: <html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+
+   > Test: REST InventoryItem (https://actapp.misa.vn/api/v1/InventoryItem)
+     Status: 404
+     [FAIL] Body: <html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+
+
+--- HOST: https://act.misa.vn ---
+   > Test: RPC get_dictionary (https://act.misa.vn/apir/sync/actopen/get_dictionary)
+     [ERR] ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+   > Test: REST Unit (https://act.misa.vn/api/v1/Unit)
+     [ERR] ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+   > Test: REST InventoryItem (https://act.misa.vn/api/v1/InventoryItem)
+     [ERR] ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+
+--- HOST: https://amisplatform.misa.vn ---
+   > Test: RPC get_dictionary (https://amisplatform.misa.vn/apir/sync/actopen/get_dictionary)
+     [ERR] ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+   > Test: REST Unit (https://amisplatform.misa.vn/api/v1/Unit)
+     [ERR] ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+   > Test: REST InventoryItem (https://amisplatform.misa.vn/api/v1/InventoryItem)
+     [ERR] ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+--- SCAN COMPLETE ---

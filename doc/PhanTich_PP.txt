@@ -1,0 +1,39 @@
+Phân tich file: XNT - WIN GỐI_Update 14.12.2025
+- Làm theo nhóm hàng 
+- Làm theo tuần,  tư 1- 7 (Tuần 1), 8-14 (Tuần 2), 15-21 (tuần 3), 22 -- cuối tháng
+--> Nếu có thực nhập thì lấy thực nhập, ko thì lấy cột dự trù để tính toán.
+--> Tồn kho an toàn  3 tháng.
+
+
+1. Sheet WEEK
+- Phân tích theo từng nhóm hàng theo tuần: Nhóm hàng này lấy từ hệ thống:
+  + Lấy từ API Misa: Để có nhóm hàng,
+  + Import vào hệ thống: Excel, CSV, json
+  + Hàng hóa thuộc nhóm: Hàng hóa, ĐVT lấy theo API Misa
+  + Import hàng hóa (CSV, excel, json)
+  + Có bảng để chứa dữ liệu hàng hóa, đơn vị tính, nhóm hàng  
+- Phân tích số liệu theo tuần. Tuần qui định như sau: Ngày 1-7 (Tuần 1), ngày 8-14 (Tuần 2), ngày 15-21 (Tuần 3), 22 - cuối tháng (Tuần 4).
+- Tồn đầu: Thì lấy 1 cột mốc số liệu đễ làm tồn đầu, rồi từ đó phân tích.
+  + Tồn đầu này: Lấy từ nguồn API
+  + Tồn đầu này: Import (Csv, excel, json)
+  + Bảng chứa tồn đàu: Theo Tháng, Năm.
+- Cột nhập thực tế: Nhập kho thực tế từ đơn hàng, phiếu nhập kho (Láy theo phiếu nhập kho từ misa)
+  + Nhập kho Thực nhập: lấy từ API. Import vào hệ thống từ Excel, CSV, Json
+  + Lấy được thông tin NCC, của đơn hàng
+  + Nhập kho dự trù: Dựa vào plan đặt hàng phân tích trước đó, đã có hợp đồng mua hàng của tháng hoặc ngày thì sẽ nhập vào đó.
+    Chú ý: Nếu có cột thực nhập thì tính toán tồn cuối sẽ bỏ qua cột dự trù, nếu không có thực nhập thì sẽ lấy cột dự trù vào tính toán.
+	Nếu hàng nhập kho dự trù về trễ trong tháng biết dự kiến thời gian vễ trễ, thì move giá trị này điền tương ứng của ngày về theo tháng hoặc ngày.
+  + Phải có bảng chứa dữ liệu nhập kho.
+ - Xuất:
+  + Dự trù xuất theo tuần: dựa vào phân tích số liệu cũ, dũ liệu bán hàng,... các yếu tố khác thị trường,,,,.. tính ra dự trù theo tháng, và chia nhỏ ra cho tuấn.
+  + Thực xuất theo tuần: dựa váo phiếu xuất bán hàng theo tuần, lấy từ API misa hoặc import (excel, csv, json)
+  + Tồn cuối tồn đầu + nhập - xuất = tồn cuối. (Chú ý dữ liệu hàng bán đổi trả nhập lại kho)
+  + Tồn cuối tuần kết chuyển làm tồn đầu tuần sau.
+  + Đủ tuần--> Tháng
+
+--> thực hiện đủ 12 tháng.  
+
+2. Sheet ORDER dùng để planning để tạo kế hoạch đặt hàng với nhà cung cấp.
+3. Sheet Biểu đồ
+ - Các biêu đồ, đồ thị phân tích dự vào các dữ liệu
+4. Planning: Các yếu tố để phục vụ cho Sheet order.
