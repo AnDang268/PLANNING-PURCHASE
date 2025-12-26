@@ -73,6 +73,15 @@ class MisaClient:
             )
             response.raise_for_status()
             response.raise_for_status()
+            
+            # Force UTF-8 if it seems to be default ASCII/ISO
+            # MISA API often returns json with implicit UTF-8 but requests detects it as ISO-8859-1
+            if response.encoding is None or 'ISO' in response.encoding.upper():
+                response.encoding = 'utf-8-sig' # Try utf-8-sig to handle BOM if present
+            
+            # Additional Debug
+            # print(f" DEBUG: Response Encoding: {response.encoding}")
+            
             data = response.json()
             
             # Auto-extract List if wrapped in 'Data' or 'data'

@@ -41,34 +41,10 @@ export default function Home() {
 
   return (
     <div className="min-h-screen flex flex-col bg-bg-subtle">
-      {/* Header / Nav */}
-      <header className="border-b border-border-subtle sticky top-0 bg-bg-elevated z-10 shadow-sm">
-        <div className="container flex h-16 items-center justify-between">
-          <div className="font-bold text-xl text-primary">PlanningPurchase</div>
-          <nav className="hidden md:flex gap-6">
-            <Link href="/" className="text-text-main hover:text-primary transition-colors font-medium">Dashboard</Link>
-            <Link href="/planning" className="text-text-muted hover:text-primary transition-colors">Planning</Link>
-            <Link href="/reports" className="text-text-muted hover:text-primary transition-colors">Reports</Link>
-          </nav>
-          <div className="flex items-center gap-4">
-            {/* Simple User Avatar Placeholder */}
-            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
-              AD
-            </div>
-          </div>
-        </div>
-      </header>
-
       {/* Main Content */}
       <main className="flex-1 py-12">
         <div className="container">
-          {/* Hero Section */}
-          <section className="mb-10 text-center md:text-left">
-            <h1 className="text-4xl text-text-heading font-bold mb-4">Dashboard Overview</h1>
-            <p className="text-text-muted text-lg max-w-2xl">
-              Welcome back. Here is your daily procurement and sales update.
-            </p>
-          </section>
+          {/* Hero Section Removed */}
 
           {/* Grid Layout */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6">

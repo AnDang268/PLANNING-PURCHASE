@@ -90,31 +90,43 @@ class AmisAccountingClient:
             "last_sync_time": last_sync_time or ""
         }
         
-        try:
-            print(f"[ACT-DICT] Fetching Type {data_type}...")
-            # print(f"Payload: {json.dumps(payload)}") 
-            resp = requests.post(url, json=payload, headers=headers, timeout=60)
+        # try:
+        print(f"[ACT-DICT] Fetching Type {data_type}...")
+        # print(f"Payload: {json.dumps(payload)}") 
+        resp = requests.post(url, json=payload, headers=headers, timeout=60)
+        
+        # --- UNICODE FIX FORCE ---
+        resp.encoding = 'utf-8' 
+        # -------------------------
+
+        if resp.status_code == 200:
+            # FORCE DECODE BYTES
+            # requests.json() might use resp.encoding which defaults to ISO-8859-1 if header is missing charset
+            # We explicitly decode bytes as utf-8-sig (handles BOM)
+            try:
+                text_data = resp.content.decode('utf-8-sig')
+            except UnicodeDecodeError:
+                text_data = resp.content.decode('utf-8') # Fallback
+
+            data = json.loads(text_data)
             
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("Success"):
-                    # Handle Data as String or List
-                    raw_data = data.get("Data", [])
-                    if isinstance(raw_data, str):
-                        try:
-                            return json.loads(raw_data)
-                        except:
-                            print(f"   [FAIL] Could not parse Data string.")
-                            return []
-                    return raw_data
-                else:
-                    print(f"   [FAIL] Msg: {data.get('ErrorMessage')}")
+            if data.get("Success"):
+                # Handle Data as String or List
+                raw_data = data.get("Data", [])
+                if isinstance(raw_data, str):
+                    try:
+                        return json.loads(raw_data)
+                    except:
+                        print(f"   [FAIL] Could not parse Data string.")
+                        return []
+                return raw_data
             else:
-                print(f"   [FAIL] HTTP {resp.status_code}")
-                # print(f"   [FAIL] Body: {resp.text[:200]}")
-        except Exception as e:
-            print(f"   [ERROR] {e}")
-        return []
+                raise Exception(f"MISA API Error: {data.get('ErrorMessage')}")
+        else:
+            raise Exception(f"HTTP Error {resp.status_code}: {resp.text[:200]}")
+        # except Exception as e:
+        #     print(f"   [ERROR] {e}")
+        # return []
 
     def get_account_objects(self):
         """Type 1: Customers and Vendors"""

@@ -39,6 +39,7 @@ class DimProducts(Base):
     pack_size = Column(Float, default=1)    # Packaging Specification
     supplier_lead_time_days = Column(Integer, default=7)
     policy_id = Column(Integer, nullable=True) # Linked to Planning Policy
+    distribution_profile_id = Column(NVARCHAR(50), ForeignKey('Planning_Distribution_Profiles.profile_id'), nullable=True) # New: Link to Demand Profile (e.g., B2B, B2C)
     abc_class = Column(CHAR(1))
     xyz_class = Column(CHAR(1))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -55,11 +56,11 @@ class DimCustomerGroups(Base):
 class DimCustomers(Base):
     __tablename__ = "Dim_Customers"
     customer_id = Column(NVARCHAR(50), primary_key=True)
-    misa_code = Column(NVARCHAR(50)) # Code displayed in MISA
+    misa_code = Column(NVARCHAR(100)) # Code displayed in MISA
     customer_name = Column(NVARCHAR(255))
     address = Column(NVARCHAR(500))
-    phone = Column(NVARCHAR(20))
-    email = Column(NVARCHAR(100))
+    phone = Column(NVARCHAR(100))
+    email = Column(NVARCHAR(255))
     group_id = Column(NVARCHAR(50), ForeignKey('Dim_Customer_Groups.group_id')) # FK to DimCustomerGroups
     # Legacy field
     group_name = Column(NVARCHAR(100)) 
@@ -71,8 +72,8 @@ class DimVendors(Base):
     vendor_id = Column(NVARCHAR(50), primary_key=True)
     vendor_name = Column(NVARCHAR(255))
     contact_person = Column(NVARCHAR(100))
-    phone = Column(NVARCHAR(20))
-    email = Column(NVARCHAR(100)) # Added email for vendor
+    phone = Column(NVARCHAR(100))
+    email = Column(NVARCHAR(255)) # Added email for vendor
     address = Column(NVARCHAR(500)) # Added address for vendor
     tax_code = Column(NVARCHAR(50)) # Added Tax Code
     group_id = Column(NVARCHAR(50), ForeignKey('Dim_Customer_Groups.group_id')) # Potential Vendor Group - Shared with Customer Groups in MISA
@@ -106,6 +107,8 @@ class FactInventorySnapshots(Base):
     sku_id = Column(NVARCHAR(50), primary_key=True)
     quantity_on_hand = Column(Float, nullable=False)
     quantity_on_order = Column(Float, default=0)
+    quantity_allocated = Column(Float, default=0)
+    unit = Column(NVARCHAR(50))
     notes = Column(NVARCHAR(255))
 
 class FactPurchasePlans(Base):

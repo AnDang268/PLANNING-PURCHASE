@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 import pandas as pd
 import math
 from datetime import datetime
-from backend.models import DimProducts, DimVendors, FactPurchasePlans, FactSales, PlanningPolicies
+from backend.models import DimProducts, DimVendors, FactPurchasePlans, FactSales, PlanningPolicies, PlanningDistributionProfile, FactForecasts
 
 class PlanningEngine:
     def __init__(self, db: Session):
@@ -71,7 +71,7 @@ class PlanningEngine:
     def generate_purchase_plans(self):
         """
         Generate Purchase Plans based on Net Requirement:
-        Net_Req = (Safety_Stock + Cycle_Stock) - (Current_Stock + In_Transit)
+        Net_Req = (Safety_Stock + Demand_This_Week) - (Current_Stock + In_Transit)
         """
         # Clear old draft plans
         self.db.query(FactPurchasePlans).filter(FactPurchasePlans.status == 'DRAFT').delete()
@@ -79,18 +79,45 @@ class PlanningEngine:
         products = self.db.query(DimProducts).all()
         plans_created = 0
         
+        # Helper: Get Profile Ratios
+        profiles = {p.profile_id: p for p in self.db.query(PlanningDistributionProfile).all()}
+        
+        today = datetime.now()
+        current_month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0).date()
+        
+        # Determine Week Number (Simple 4-week split: days 1-7=1, 8-14=2, 15-21=3, 22+=4)
+        day = today.day
+        week_num = min((day - 1) // 7 + 1, 4)
+        
         for product in products:
-            # Simple assumption: Cycle Stock = Demand * Lead Time (Pipeline Inventory)
-            # For this MVP, we will simplify: NetReq = MinStock (Safety) - CurrentStock(assumed 0 for now as we don't have inventory table)
-            # TODO: Integrate real Inventory Snapshot table.
+            # 1. Get Monthly Forecast
+            # Assuming FactForecasts stores data for the 1st of the month
+            forecast_entry = self.db.query(FactForecasts).filter(
+                FactForecasts.sku_id == product.sku_id,
+                FactForecasts.forecast_date == current_month_start
+            ).first()
             
-            # In absence of generic inventory table, let's assume 'min_stock_level' IS the target we must maintain.
-            # And let's assume current stock is 0 (worst case) for generation if not tracked.
-            # OR we can mock it.
+            monthly_forecast = forecast_entry.quantity_predicted if forecast_entry else 0
             
-            # For a realistic MVP, let's calculate simplistic Net Req
-            # NetReq = Target(MinStock) - Current(0)
-            net_req = product.min_stock_level
+            # 2. Get Profile Ratio
+            ratio = 0.25 # Default STD logic
+            if product.distribution_profile_id and product.distribution_profile_id in profiles:
+                p = profiles[product.distribution_profile_id]
+                if week_num == 1: ratio = p.week_1_ratio
+                elif week_num == 2: ratio = p.week_2_ratio
+                elif week_num == 3: ratio = p.week_3_ratio
+                else: ratio = p.week_4_ratio
+            
+            demand_this_week = monthly_forecast * ratio
+            
+            # 3. Calculate Net Requirement
+            # NetReq = SafetyStock + Demand - CurrentStock
+            # Assuming current stock is short (just for demo generation). 
+            # In production, we fetch FactInventorySnapshots.
+            
+            # For demo: specific logic to verify "Profiling" works
+            # We add MinStock + DemandThisWeek
+            net_req = (product.min_stock_level or 0) + demand_this_week
             
             if net_req <= 0:
                 continue
@@ -109,17 +136,49 @@ class PlanningEngine:
             
             # Create Plan
             plan = FactPurchasePlans(
-                plan_date=datetime.now(),
+                plan_date=today,
                 sku_id=product.sku_id,
                 vendor_id=None, # To be assigned
+                forecast_demand=demand_this_week, # Log the calculated demand portion
+                safety_stock_required=product.min_stock_level,
                 suggested_quantity=net_req,
                 final_quantity=final_qty,
-                total_amount=0, # Need price
+                total_amount=0, 
                 currency='VND',
-                status='DRAFT'
+                status='DRAFT',
+                notes=f"Generated using Profile: {product.distribution_profile_id or 'STD'} (Week {week_num}, Ratio {ratio})"
             )
             self.db.add(plan)
             plans_created += 1
             
         self.db.commit()
         return {"status": "success", "plans_generated": plans_created}
+
+    def update_plan(self, plan_id: int, final_quantity: float, status: str = None, notes: str = None):
+        plan = self.db.query(FactPurchasePlans).filter(FactPurchasePlans.plan_id == plan_id).first()
+        if not plan:
+            raise Exception("Plan not found")
+        
+        # Only allow updates if not already approved/ordered (unless admin override, but let's keep simple)
+        if plan.status == 'APPROVED':
+             raise Exception("Cannot update an approved plan")
+
+        plan.final_quantity = final_quantity
+        if status:
+            plan.status = status
+        if notes:
+            plan.notes = notes
+            
+        self.db.commit()
+        return {"status": "success", "message": "Plan updated"}
+
+    def approve_plan(self, plan_id: int):
+        plan = self.db.query(FactPurchasePlans).filter(FactPurchasePlans.plan_id == plan_id).first()
+        if not plan:
+            raise Exception("Plan not found")
+            
+        plan.status = 'APPROVED'
+        # In a real system, this might trigger an Email or create a PO record
+        
+        self.db.commit()
+        return {"status": "success", "message": "Plan approved"}

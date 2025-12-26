@@ -4,6 +4,7 @@
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
 import { Activity, Database, Server, RefreshCw, CheckCircle2, XCircle } from "lucide-react"
 import { API_BASE_URL } from "@/config"
 
@@ -19,6 +20,54 @@ export default function DatabaseCheckPage() {
         password: ""
     })
     const [saving, setSaving] = useState(false)
+
+    // Sync Manager State
+    const [isSyncing, setIsSyncing] = useState(false)
+    const [syncSelection, setSyncSelection] = useState({
+        units: false,
+        groups: false,
+        warehouses: false,
+        partners: false, // Vendors
+        customers: false,
+        customer_groups: false,
+        products: false
+    })
+
+    const handleMasterSync = async () => {
+        setIsSyncing(true)
+        try {
+            const selectedTypes = Object.entries(syncSelection)
+                .filter(([_, selected]) => selected)
+                .map(([type]) => type)
+
+            if (selectedTypes.length === 0) return
+
+            alert(`Starting sync for: ${selectedTypes.join(", ")}`)
+
+            // Process sequentially to be safe, or parallel
+            // Deduplicate: partners, customers, customer_groups all map to 'partners' endpoint
+            const endpointsToCall = new Set<string>()
+
+            selectedTypes.forEach(type => {
+                if (type === 'partners' || type === 'customers' || type === 'customer_groups') {
+                    endpointsToCall.add('partners')
+                } else {
+                    endpointsToCall.add(type)
+                }
+            })
+
+            // Process sequentially
+            for (const endpoint of Array.from(endpointsToCall)) {
+                await fetch(`${API_BASE_URL}/api/data/sync/${endpoint}`, { method: "POST" })
+            }
+
+            alert("Sync requests sent!")
+        } catch (e) {
+            alert("Sync failed to start")
+        } finally {
+            setIsSyncing(false)
+        }
+    }
 
     const checkHealth = async () => {
         setStatus("loading")
@@ -212,6 +261,7 @@ export default function DatabaseCheckPage() {
                 </Card>
             )}
 
+
             {status === "unhealthy" && (
                 <Card className="border-danger/50 bg-danger/10">
                     <CardHeader>
@@ -227,6 +277,93 @@ export default function DatabaseCheckPage() {
                     </CardContent>
                 </Card>
             )}
+
+            {/* Sync Manager Section */}
+            <div className="grid gap-4 md:grid-cols-1">
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <RefreshCw className="h-5 w-5" />
+                            Sync Manager
+                        </CardTitle>
+                        <CardDescription>
+                            Select specific data categories to synchronize from MISA AMIS.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                            {['units', 'groups', 'warehouses', 'partners', 'customers', 'customer_groups', 'products'].map((type) => (
+                                <div key={type} className="flex items-center space-x-2 border p-4 rounded-md bg-muted/50">
+                                    <input
+                                        type="checkbox"
+                                        id={type}
+                                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                        checked={syncSelection[type as keyof typeof syncSelection]}
+                                        onChange={(e) => setSyncSelection(prev => ({ ...prev, [type]: e.target.checked }))}
+                                    />
+                                    <Label htmlFor={type} className="capitalize cursor-pointer font-medium">
+                                        {type}
+                                    </Label>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={() => setSyncSelection({
+                                    units: true, groups: true, warehouses: true, partners: true, customers: true, customer_groups: true, products: true
+                                })}
+                            >
+                                Select All
+                            </Button>
+                            <Button
+                                onClick={handleMasterSync}
+                                disabled={isSyncing || !Object.values(syncSelection).some(Boolean)}
+                            >
+                                {isSyncing ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                                {isSyncing ? "Syncing..." : "Sync Selected"}
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            <Card className="border-danger">
+                <CardHeader>
+                    <CardTitle className="text-danger flex items-center gap-2">
+                        <Trash2 className="h-5 w-5" />
+                        Maintenance Operations
+                    </CardTitle>
+                    <CardDescription>
+                        Dangerous actions that affect system data.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="flex items-center justify-between p-4 border border-danger/20 rounded-lg bg-danger/5">
+                        <div className="space-y-1">
+                            <h4 className="text-sm font-medium text-danger">Reset System Data</h4>
+                            <p className="text-xs text-text-muted">
+                                Performs a hard delete of ALL Products, Vendors, and Plans. Settings are preserved.
+                            </p>
+                        </div>
+                        <Button variant="destructive" onClick={async () => {
+                            if (confirm("ARE YOU SURE? This will wipe all master data and plans. This action cannot be undone.")) {
+                                try {
+                                    const res = await fetch(`${API_BASE_URL}/api/data/reset`, { method: "DELETE" })
+                                    if (res.ok) {
+                                        alert("System Reset Complete. You can now re-sync data.")
+                                    } else {
+                                        const err = await res.json()
+                                        alert(`Reset Failed: ${err.detail}`)
+                                    }
+                                } catch (e) { alert("Network Error") }
+                            }
+                        }}>
+                            Purge Data
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     )
 }
@@ -246,6 +383,27 @@ function AlertCircle({ className }: { className?: string }) {
             <circle cx="12" cy="12" r="10" />
             <line x1="12" y1="8" x2="12" y2="12" />
             <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+    )
+}
+
+function Trash2({ className }: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="M3 6h18" />
+            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+            <line x1="10" y1="11" x2="10" y2="17" />
+            <line x1="14" y1="11" x2="14" y2="17" />
         </svg>
     )
 }

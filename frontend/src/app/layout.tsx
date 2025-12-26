@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google"; // Ensure this matches existing
+import { Navigation } from "@/components/Navigation"; // Import Navigation
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,6 +29,7 @@ export default function RootLayout({
         suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <Navigation />
         {children}
       </body>
     </html>

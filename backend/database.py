@@ -22,10 +22,14 @@ def get_connection_string():
     driver = os.getenv("DB_DRIVER", "ODBC Driver 17 for SQL Server")
     
     # Construct connection string
+    # Try appending UTF-8 charset explicitly just in case, though ODBC 17 handles it.
     params = urllib.parse.quote_plus(
         f'DRIVER={{{driver}}};SERVER={server};DATABASE={database};UID={username};PWD={password};'
     )
     return f"mssql+pyodbc:///?odbc_connect={params}"
+
+from sqlalchemy import event
+import pyodbc
 
 def init_db():
     global engine, SessionLocal
@@ -33,10 +37,21 @@ def init_db():
     
     engine = create_engine(
         url, 
-        # Disable fast_executemany due to PyODBC 'sentinel value' bug with Unicode/NULLs
         fast_executemany=False,
-        connect_args={'check_same_thread': False} if 'sqlite' in url else {} 
     )
+    
+    # --- UNICODE FIX: FORCE PYODBC ENCODING ---
+    # --- UNICODE FIX: FORCE PYODBC ENCODING ---
+    @event.listens_for(engine, "connect")
+    def on_connect(dbapi_connection, connection_record):
+        # Force UTF-8 for parsing char/varchar/text
+        # dbapi_connection.setdecoding(pyodbc.SQL_CHAR, encoding='utf-8')
+        # dbapi_connection.setdecoding(pyodbc.SQL_WCHAR, encoding='utf-8') # CAUSES CRASH ON READ
+        # dbapi_connection.setencoding(encoding='utf-8')
+        pass
+    # ------------------------------------------
+    # ------------------------------------------
+
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     print(f"DATABASE INITIALIZED: {os.getenv('DB_SERVER')}/{os.getenv('DB_DATABASE')}")
 

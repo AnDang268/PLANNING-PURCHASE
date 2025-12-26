@@ -1,67 +1,125 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
+import { ArrowLeft } from "lucide-react"
 import { StandardDataTable, ColumnDef } from "@/components/StandardDataTable"
 import { API_BASE_URL } from "@/config"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Button } from "@/components/ui/button"
+import { downloadCSV } from "@/lib/exportUtils"
 
 interface Group {
     group_id: string
     group_name: string
-    misa_code: string
-    parent_id: string
     updated_at: string
 }
 
 export default function GroupsPage() {
+    const router = useRouter()
     const [data, setData] = useState<Group[]>([])
     const [loading, setLoading] = useState(true)
+
+    // CRUD
+    const [open, setOpen] = useState(false)
+    const [isEdit, setIsEdit] = useState(false)
+    const [formData, setFormData] = useState<Partial<Group>>({})
 
     const fetchData = async () => {
         setLoading(true)
         try {
             const res = await fetch(`${API_BASE_URL}/api/data/groups`)
-            if (res.ok) {
-                const json = await res.json()
-                setData(json)
-            }
+            if (res.ok) setData(await res.json())
         } catch (e) { console.error(e) }
         finally { setLoading(false) }
     }
 
-    useEffect(() => {
-        fetchData()
-    }, [])
+    useEffect(() => { fetchData() }, [])
 
     const handleSync = async () => {
-        const res = await fetch(`${API_BASE_URL}/api/data/sync/groups`, { method: "POST" })
-        if (res.ok) {
-            alert("Sync Started for Groups. Please refresh shortly.")
-            setTimeout(fetchData, 2000)
-        } else {
-            alert("Sync Failed")
-        }
+        setLoading(true)
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/data/sync/groups`, { method: "POST" })
+            if (res.ok) {
+                alert("Sync Started")
+                setTimeout(() => {
+                    fetchData()
+                    setLoading(false)
+                }, 2000)
+            } else {
+                alert("Sync Failed")
+                setLoading(false)
+            }
+        } catch (e) { setLoading(false) }
     }
 
-    const handleCancelSync = async () => {
-        const res = await fetch(`${API_BASE_URL}/api/data/sync/cancel`, { method: "POST" })
-        if (res.ok) alert("Cancellation Requested.")
+    const handleExport = async () => {
+        const headers = ["group_id", "group_name", "updated_at"]
+        const csvContent = [
+            headers.join(","),
+            ...data.map(item => [
+                `"${item.group_id}"`,
+                `"${item.group_name}"`,
+                `"${item.updated_at || ''}"`
+            ].join(","))
+        ].join("\n")
+        downloadCSV(csvContent, "groups_export")
     }
 
-    // Map parent_id to name for display
-    const groupMap = new Map(data.map(g => [g.group_id, g.group_name]))
-    const enrichedData = data.map(g => ({
-        ...g,
-        parent_name: groupMap.get(g.parent_id) || '-'
-    }))
+    const handleSubmit = async () => {
+        const method = isEdit ? "PUT" : "POST"
+        const url = isEdit
+            ? `${API_BASE_URL}/api/data/groups/${formData.group_id}`
+            : `${API_BASE_URL}/api/data/groups`
 
-    // Unique Parents for Filter
-    const uniqueParents = Array.from(new Set(enrichedData.map(g => g.parent_name))).filter(n => n !== '-').sort()
+        try {
+            const res = await fetch(url, {
+                method,
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(formData)
+            })
+            if (res.ok) {
+                setOpen(false)
+                fetchData()
+            } else {
+                const err = await res.json()
+                alert(`Error: ${err.detail}`)
+            }
+        } catch (e) { alert("Network Error") }
+    }
 
-    const columns: ColumnDef<any>[] = [
+    const handleDelete = async (item: Group) => {
+        if (!confirm(`Delete ${item.group_name}?`)) return
+        await fetch(`${API_BASE_URL}/api/data/groups/${item.group_id}`, { method: "DELETE" })
+        fetchData()
+    }
+
+    const handleImport = async (file: File) => {
+        setLoading(true)
+        try {
+            const formData = new FormData()
+            formData.append("file", file)
+            const res = await fetch(`${API_BASE_URL}/api/data/import/upload?type=groups`, {
+                method: "POST",
+                body: formData
+            })
+            if (res.ok) {
+                const json = await res.json()
+                alert(`Import Successful: ${json.message}`)
+                fetchData()
+            } else {
+                const err = await res.json()
+                alert(`Import Failed: ${err.detail}`)
+            }
+        } catch (e) { alert("Network Error") }
+        finally { setLoading(false) }
+    }
+
+    const columns: ColumnDef<Group>[] = [
         { header: "Group ID", accessorKey: "group_id", className: "font-medium" },
-        { header: "Code (MISA)", accessorKey: "misa_code" },
         { header: "Group Name", accessorKey: "group_name" },
-        { header: "Parent Group", accessorKey: "parent_name" },
         {
             header: "Last Updated",
             accessorKey: "updated_at",
@@ -70,22 +128,65 @@ export default function GroupsPage() {
     ]
 
     return (
-        <StandardDataTable
-            title="Product Groups"
-            description="Classification groups for products."
-            data={enrichedData}
-            columns={columns}
-            searchKey="group_name"
-            filters={[
-                {
-                    key: "parent_name",
-                    title: "Parent Group",
-                    options: uniqueParents.map(p => ({ label: p, value: p }))
-                }
-            ]}
-            loading={loading}
-            onSync={handleSync}
-            onCancelSync={handleCancelSync}
-        />
+        <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={() => router.back()}>
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    Back
+                </Button>
+            </div>
+            <StandardDataTable
+                title="Product Groups"
+                description="Manage categories."
+                data={data}
+                columns={columns}
+                searchKey="group_name"
+                loading={loading}
+                onSync={handleSync}
+                onExport={handleExport}
+                onImport={handleImport}
+                onAdd={() => {
+                    setFormData({})
+                    setIsEdit(false)
+                    setOpen(true)
+                }}
+                onEdit={(item) => {
+                    setFormData(item)
+                    setIsEdit(true)
+                    setOpen(true)
+                }}
+                onDelete={handleDelete}
+            />
+
+            <Dialog open={open} onOpenChange={setOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{isEdit ? "Edit Group" : "Add Group"}</DialogTitle>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                        <div className="space-y-2">
+                            <Label>Group ID</Label>
+                            <Input
+                                disabled={isEdit}
+                                value={formData.group_id || ''}
+                                onChange={e => setFormData({ ...formData, group_id: e.target.value })}
+                                placeholder="e.g. ELECTRONICS"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Group Name</Label>
+                            <Input
+                                value={formData.group_name || ''}
+                                onChange={e => setFormData({ ...formData, group_name: e.target.value })}
+                                placeholder="e.g. Consumer Electronics"
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button onClick={handleSubmit}>Save</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        </div>
     )
 }

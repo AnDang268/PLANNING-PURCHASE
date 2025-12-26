@@ -128,3 +128,118 @@ class ForecastingEngine:
         # Sort list
         sorted_data = sorted(data.values(), key=lambda x: x['date'])
         return sorted_data
+    
+    def calculate_group_forecast(self, group_id: str, model_type: str = 'SMA', periods: int = 30):
+        """
+        Calculates forecast for a Product Group (Aggregated).
+        Stores with sku_id = 'GRP_{group_id}'
+        """
+        # 1. Fetch Aggregated Sales History
+        sales = self.db.query(
+            FactSales.order_date, 
+            func.sum(FactSales.quantity).label('quantity')
+        ).join(DimProducts, FactSales.sku_id == DimProducts.sku_id)\
+        .filter(DimProducts.group_id == group_id)\
+        .group_by(FactSales.order_date)\
+        .order_by(FactSales.order_date.asc()).all()
+
+        if not sales:
+            return {"status": "error", "message": "No sales data found for this group"}
+
+        # 2. Convert to DataFrame
+        df = pd.DataFrame(sales, columns=['date', 'quantity'])
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.set_index('date')
+        
+        # Resample to Daily and Fill Missing with 0
+        df_daily = df.resample('D').sum().fillna(0)
+        
+        # 3. Apply Forecasting Logic (Same as SKU)
+        forecast_values = []
+        last_date = df_daily.index[-1]
+        
+        if model_type == 'SMA':
+            window = 7
+            df_daily['forecast'] = df_daily['quantity'].rolling(window=window).mean()
+            last_avg = df_daily['quantity'].tail(30).mean()
+            if np.isnan(last_avg): last_avg = 0
+            forecast_values = [last_avg] * periods
+            
+        elif model_type == 'EMA':
+            span = 30
+            df_daily['forecast'] = df_daily['quantity'].ewm(span=span, adjust=False).mean()
+            last_ema = df_daily['forecast'].iloc[-1]
+            if np.isnan(last_ema): last_ema = 0
+            forecast_values = [last_ema] * periods
+
+        # 4. Save Forecast to DB (Prefix GRP_)
+        fake_sku_id = f"GRP_{group_id}"
+        today = datetime.now().date()
+        self.db.query(FactForecasts).filter(
+            FactForecasts.sku_id == fake_sku_id,
+            FactForecasts.run_date == today
+        ).delete()
+        
+        new_records = []
+        for i, val in enumerate(forecast_values):
+            target_date = last_date + timedelta(days=i+1)
+            new_records.append(FactForecasts(
+                run_date=today,
+                sku_id=fake_sku_id,
+                forecast_date=target_date,
+                quantity_predicted=round(float(val), 2),
+                model_used=model_type
+            ))
+        
+        self.db.add_all(new_records)
+        self.db.commit()
+        
+        return {
+            "status": "success", 
+            "sku_id": fake_sku_id,
+            "model": model_type,
+            "forecasted_days": periods,
+            "avg_predicted_qty": round(sum(forecast_values)/len(forecast_values), 2)
+        }
+
+    def get_group_forecast_vs_actual(self, group_id: str):
+        """
+        Returns merged actual sales and forecast data for Group Visualization.
+        """
+        fake_sku_id = f"GRP_{group_id}"
+        
+        # Actuals (Aggregated)
+        sales = self.db.query(
+            FactSales.order_date, 
+            func.sum(FactSales.quantity).label('quantity')
+        ).join(DimProducts, FactSales.sku_id == DimProducts.sku_id)\
+        .filter(DimProducts.group_id == group_id)\
+        .group_by(FactSales.order_date)\
+        .order_by(FactSales.order_date.asc()).all()
+        
+        data = {}
+        for s in sales:
+            d_str = s.order_date.strftime("%Y-%m-%d")
+            # s.quantity might be Decimal or float
+            qty = float(s.quantity) if s.quantity else 0
+            if d_str not in data: data[d_str] = {"date": d_str, "actual": 0, "forecast": None}
+            data[d_str]["actual"] += qty
+
+        # Forecasts (Latest Run for GRP_ ID)
+        latest_run = self.db.query(func.max(FactForecasts.run_date)).filter(
+            FactForecasts.sku_id == fake_sku_id
+        ).scalar()
+        
+        if latest_run:
+            forecasts = self.db.query(FactForecasts).filter(
+                FactForecasts.sku_id == fake_sku_id,
+                FactForecasts.run_date == latest_run
+            ).all()
+            
+            for f in forecasts:
+                d_str = f.forecast_date.strftime("%Y-%m-%d")
+                if d_str not in data: data[d_str] = {"date": d_str, "actual": None, "forecast": 0}
+                data[d_str]["forecast"] = f.quantity_predicted
+
+        sorted_data = sorted(data.values(), key=lambda x: x['date'])
+        return sorted_data

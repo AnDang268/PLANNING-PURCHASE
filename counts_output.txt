@@ -1,0 +1,4 @@
+DimVendors Count: 0
+DimCustomers Count: 0
+
+--- Sample Vendors (Top 5) ---

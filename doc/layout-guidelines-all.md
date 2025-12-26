@@ -1,5 +1,8 @@
 # Quy Tắc Thiết Kế Layout Web Chuẩn (Complete Edition)
 
+**Design Style**: Modern Clean Minimalism (Enterprise SaaS)  
+*Inspired by: Geist Design (Vercel) & Shadcn/UI*
+
 Tài liệu style-guide tổng hợp cho layout web/app: grid, spacing, alignment, components, color system, accessibility và responsive.
 
 ---

@@ -8,7 +8,7 @@ export default function DataManagementPage() {
 
     useEffect(() => {
         router.push("/dashboard/data/products")
-    }, [])
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     return (
         <div className="flex h-[200px] items-center justify-center">

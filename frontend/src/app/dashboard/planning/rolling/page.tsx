@@ -52,6 +52,7 @@ interface MatrixRow {
     sku_id: string;
     product_name: string;
     category: string;
+    group_name?: string;
     weeks: {
         [date: string]: RollingRecord;
     }
@@ -62,6 +63,10 @@ export default function RollingPlanningPage() {
     const [data, setData] = useState<MatrixRow[]>([]);
     const [uniqueDates, setUniqueDates] = useState<string[]>([]);
     const [calculating, setCalculating] = useState(false);
+
+    // Filters
+    const [groups, setGroups] = useState<any[]>([]);
+    const [selectedGroup, setSelectedGroup] = useState<string>("ALL");
 
     // Profile State
     const [profiles, setProfiles] = useState<PlanningProfile[]>([]);
@@ -77,16 +82,22 @@ export default function RollingPlanningPage() {
             const res = await axios.get(`${API_BASE_URL}/api/planning/rolling/profiles`);
             if (res.data && res.data.length > 0) {
                 setProfiles(res.data);
-                setSelectedProfile(res.data[0].profile_id);
+                // setSelectedProfile(res.data[0].profile_id); // Don't auto-select strictly
             }
+
+            // Fetch Groups for Filter
+            const gRes = await axios.get(`${API_BASE_URL}/api/data/groups`);
+            if (gRes.data) setGroups(gRes.data);
         } catch (e) {
-            console.error("Failed to fetch profiles", e);
+            console.error("Failed to fetch initial data", e);
         }
     };
 
     const fetchData = async () => {
         setLoading(true);
         try {
+            // In a real app, pass current filters to backend. 
+            // For now, client-side filter is fine if data is small.
             const res = await axios.get(`${API_BASE_URL}/api/planning/rolling/matrix`);
             processData(res.data);
         } catch (error) {
@@ -110,6 +121,7 @@ export default function RollingPlanningPage() {
                     sku_id: r.sku_id,
                     product_name: r.product_name,
                     category: r.category,
+                    group_name: r.category, // Map category to group_name for consistency
                     weeks: {}
                 };
             }
@@ -188,6 +200,20 @@ export default function RollingPlanningPage() {
                         </Select>
                     </div>
 
+                    <div className="w-[200px]">
+                        <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+                            <SelectTrigger>
+                                <SelectValue placeholder="Filter by Group" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="ALL">All Groups</SelectItem>
+                                {groups.map((g: any) => (
+                                    <SelectItem key={g.group_id} value={g.group_name}>{g.group_name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
                     <Button onClick={handleRunCalculation} disabled={calculating}>
                         {calculating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
                         Run Calculation
@@ -225,36 +251,38 @@ export default function RollingPlanningPage() {
                                         <Loader2 className="h-8 w-8 animate-spin mx-auto" />
                                     </TableCell>
                                 </TableRow>
-                            ) : (data.map(row => (
-                                <TableRow key={row.sku_id}>
-                                    <TableCell className="font-medium sticky left-0 bg-background z-10 border-r">{row.sku_id}</TableCell>
-                                    <TableCell className="sticky left-[100px] bg-background z-10 border-r truncate max-w-[200px]" title={row.product_name}>{row.product_name}</TableCell>
-                                    {uniqueDates.map(d => {
-                                        const cell = row.weeks[d];
-                                        if (!cell) return <TableCell key={d} className="border-l bg-gray-50">-</TableCell>;
+                            ) : (data
+                                .filter(row => selectedGroup === "ALL" || row.category === selectedGroup || row.group_name === selectedGroup) // Filter Logic
+                                .map(row => (
+                                    <TableRow key={row.sku_id}>
+                                        <TableCell className="font-medium sticky left-0 bg-background z-10 border-r">{row.sku_id}</TableCell>
+                                        <TableCell className="sticky left-[100px] bg-background z-10 border-r truncate max-w-[200px]" title={row.product_name}>{row.product_name}</TableCell>
+                                        {uniqueDates.map(d => {
+                                            const cell = row.weeks[d];
+                                            if (!cell) return <TableCell key={d} className="border-l bg-gray-50">-</TableCell>;
 
-                                        // Color Logic
-                                        let bgClass = "";
-                                        if (cell.status === 'CRITICAL') bgClass = "bg-red-100 text-red-700 font-bold";
-                                        else if (cell.status === 'LOW') bgClass = "bg-yellow-50 text-yellow-700";
-                                        else if (cell.status === 'OVERSTOCK') bgClass = "bg-blue-50 text-blue-700";
+                                            // Color Logic
+                                            let bgClass = "";
+                                            if (cell.status === 'CRITICAL') bgClass = "bg-red-100 text-red-700 font-bold";
+                                            else if (cell.status === 'LOW') bgClass = "bg-yellow-50 text-yellow-700";
+                                            else if (cell.status === 'OVERSTOCK') bgClass = "bg-blue-50 text-blue-700";
 
-                                        return (
-                                            <TableCell key={d} className={`text-center border-l text-xs p-1 ${bgClass}`}>
-                                                <div className="flex flex-col gap-1">
-                                                    <div title="Closing Stock">C: {Math.round(cell.closing)}</div>
-                                                    {cell.net_req > 0 && (
-                                                        <div className="text-red-600 font-bold border border-red-200 bg-white rounded px-1">
-                                                            Buy: {Math.round(cell.net_req)}
-                                                        </div>
-                                                    )}
-                                                    <div className="text-[10px] text-gray-400">Fc: {Math.round(cell.forecast)}</div>
-                                                </div>
-                                            </TableCell>
-                                        )
-                                    })}
-                                </TableRow>
-                            )))}
+                                            return (
+                                                <TableCell key={d} className={`text-center border-l text-xs p-1 ${bgClass}`}>
+                                                    <div className="flex flex-col gap-1">
+                                                        <div title="Closing Stock">C: {Math.round(cell.closing)}</div>
+                                                        {cell.net_req > 0 && (
+                                                            <div className="text-red-600 font-bold border border-red-200 bg-white rounded px-1">
+                                                                Buy: {Math.round(cell.net_req)}
+                                                            </div>
+                                                        )}
+                                                        <div className="text-[10px] text-gray-400">Fc: {Math.round(cell.forecast)}</div>
+                                                    </div>
+                                                </TableCell>
+                                            )
+                                        })}
+                                    </TableRow>
+                                )))}
                         </TableBody>
                     </Table>
                 </div>
