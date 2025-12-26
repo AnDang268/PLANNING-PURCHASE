@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { API_BASE_URL } from "@/config"
 import { useToast } from "@/components/ui/use-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { CheckCircle2, Edit, Download, FileSpreadsheet, Upload, Check, ChevronsUpDown } from "lucide-react"
+import { CheckCircle2, Edit, Download, FileSpreadsheet, Upload, Check, ChevronsUpDown, Trash2 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
 import { cn } from "@/lib/utils"
@@ -119,6 +119,26 @@ export default function PurchasePlansPage() {
         }
     }
 
+    const handleDelete = async (plan: PurchasePlan) => {
+        console.log("Attempting delete", plan.id);
+        if (!confirm(`Delete plan for ${plan.sku_id}?`)) return
+
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/planning/plans/${plan.id}`, {
+                method: "DELETE"
+            })
+            if (res.ok) {
+                toast({ title: "Deleted", description: `Plan #${plan.id} deleted.` })
+                fetchPlans()
+            } else {
+                const json = await res.json()
+                throw new Error(json.detail || "Failed to delete")
+            }
+        } catch (e: any) {
+            toast({ title: "Error", description: e.message || "Failed to delete", variant: "destructive" })
+        }
+    }
+
     const startEdit = (plan: PurchasePlan) => {
         setEditingPlan(plan)
         setNewQty(plan.final_quantity)
@@ -223,7 +243,10 @@ export default function PurchasePlansPage() {
                             <Button size="sm" variant="outline" onClick={() => startEdit(item)}>
                                 <Edit className="w-4 h-4 mr-1" /> Edit
                             </Button>
-                            <Button size="sm" onClick={() => handleApprove(item)}>
+                            <Button size="sm" variant="destructive" onClick={() => handleDelete(item)} className="ml-1">
+                                <Trash2 className="w-4 h-4" />
+                            </Button>
+                            <Button size="sm" onClick={() => handleApprove(item)} className="ml-1">
                                 <CheckCircle2 className="w-4 h-4 mr-1" /> Approve
                             </Button>
                         </>
@@ -232,6 +255,35 @@ export default function PurchasePlansPage() {
             )
         }
     ]
+
+    const handleImportOpenStock = async (file: File) => {
+        setLoading(true)
+        try {
+            const formData = new FormData()
+            formData.append("file", file)
+            // type=opening_stock matches backend
+            const res = await fetch(`${API_BASE_URL}/api/data/import/upload?type=opening_stock`, {
+                method: "POST",
+                body: formData
+            })
+            if (res.ok) {
+                const json = await res.json()
+                toast({ title: "Import Successful", description: json.message })
+                // Maybe refresh? But opening stock affects rolling inventory, not directly purchase plans immediately
+                // But let's fetch to be safe
+                fetchPlans()
+            } else {
+                const err = await res.json()
+                toast({ title: "Import Failed", description: err.detail, variant: "destructive" })
+            }
+        } catch (e) {
+            toast({ title: "Network Error", variant: "destructive" })
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const openStockInputRef = useRef<HTMLInputElement>(null)
 
     return (
         <div className="space-y-4 py-6 container">
@@ -281,7 +333,7 @@ export default function PurchasePlansPage() {
                                 <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                             </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-[300px] p-0">
+                        <PopoverContent className="w-[300px] p-0 bg-white">
                             <Command>
                                 <CommandInput placeholder="Search group..." />
                                 <CommandEmpty>No group found.</CommandEmpty>

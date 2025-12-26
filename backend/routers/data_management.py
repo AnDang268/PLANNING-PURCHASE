@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from datetime import datetime
 from backend.database import get_db
-from backend.models import DimProducts, DimVendors, FactPurchasePlans, FactSales, DimUnits, DimProductGroups, DimWarehouses, DimCustomerGroups, DimCustomers, SystemConfig, SystemSyncLogs, FactInventorySnapshots
+from backend.models import DimProducts, DimVendors, FactPurchasePlans, FactSales, DimUnits, DimProductGroups, DimWarehouses, DimCustomerGroups, DimCustomers, SystemConfig, SystemSyncLogs, FactInventorySnapshots, FactRollingInventory, PlanningDistributionProfile
 from backend.services.sync_service import SyncService
 
 router = APIRouter(
@@ -356,6 +356,245 @@ def process_partner_groups_file(df: pd.DataFrame, db: Session):
     except: db.rollback()
     return count
 
+def process_opening_stock_file(df, db: Session):
+    from datetime import date, datetime
+    try:
+        data_rows = df  # Expecting df to be the dataframe
+        
+        # 1. Identify Columns
+        header_row = data_rows.columns.tolist() # Assuming header is already parse correctly by simple read_excel/csv
+        # Check if we need to find header row dynamically (as per previous logic)
+        # Previous logic used dynamic header finding. Let's keep it if possible, or assume standardized input.
+        # Re-implementing dynamic header logic from previous code for safety:
+
+        # Convert to list of lists to search for header
+        raw_values = data_rows.values.tolist()
+        columns = data_rows.columns.tolist()
+        all_rows = [columns] + raw_values
+        
+        header_idx = -1
+        col_sku = -1
+        col_qty = -1
+        col_wh_code = -1
+        col_wh_name = -1
+        
+        # Keywords
+        sku_keywords = ['sku', 'product_code', 'item_code', 'mã hàng', 'ma_hang', 'part_number']
+        qty_keywords = ['qty', 'quantity', 'stock', 'so_luong', 'số lượng', 'open', 'tồn']
+        wh_code_keywords = ['warehouse_code', 'wh_code', 'ma_kho', 'mã kho']
+        wh_name_keywords = ['warehouse_name', 'wh_name', 'ten_kho', 'tên kho']
+
+        for i, row in enumerate(all_rows[:20]): # Scan first 20 rows
+            row_lower = [str(x).lower().strip() for x in row]
+            
+            # Find SKU
+            for k in sku_keywords:
+                for j, cell in enumerate(row_lower):
+                    if k in cell: 
+                        col_sku = j
+                        break
+                if col_sku != -1: break
+            
+            # Find Qty
+            for k in qty_keywords:
+                for j, cell in enumerate(row_lower):
+                    if k in cell: 
+                        col_qty = j
+                        break
+                if col_qty != -1: break
+                
+            # Find Warehouse
+            for k in wh_code_keywords:
+                for j, cell in enumerate(row_lower):
+                    if k in cell: col_wh_code = j; break
+            
+            for k in wh_name_keywords:
+                for j, cell in enumerate(row_lower):
+                    if k in cell: col_wh_name = j; break
+
+            if col_sku != -1 and col_qty != -1:
+                header_idx = i
+                break
+        
+        if header_idx == -1:
+             return 0, ["Could not find header row with SKU and Quantity columns."]
+
+        # Correct Data Slice
+        valid_rows = all_rows[header_idx+1:]
+        
+        # 2. Identify Date Columns (Matrix Mode)
+        date_cols = [] # [(index, date_obj)]
+        
+        # Try to parse header columns as dates
+        header_values = all_rows[header_idx]
+        for j, val in enumerate(header_values):
+            s_val = str(val).strip()
+            # Try parsing various formats
+            parsed_date = None
+            for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"]:
+                try:
+                    parsed_date = datetime.strptime(s_val, fmt).date()
+                    break
+                except: pass
+            
+            if parsed_date:
+                date_cols.append((j, parsed_date))
+        
+        is_matrix_mode = len(date_cols) > 0
+        if is_matrix_mode:
+            print(f"[IMPORT] Matrix Mode Detected! Found {len(date_cols)} date columns.")
+
+        # 3. Bulk Pre-fetch Warehouses
+        all_wh = db.query(DimWarehouses).all()
+        wh_map_by_code = {w.warehouse_code.lower(): w for w in all_wh if w.warehouse_code}
+        wh_map_by_name = {w.warehouse_name.lower(): w for w in all_wh if w.warehouse_name}
+        
+        # 4. Process Rows for Batch
+        updates = {} # (sku, wh_id, bucket_date) -> qty
+        errors = []
+        
+        # Prepare Warehouse Updates/Inserts
+        new_warehouses = {} 
+
+        for r_idx, row in enumerate(valid_rows):
+            try:
+                # SKU
+                if col_sku >= len(row): continue
+                sku = str(row[col_sku])
+                if pd.isna(sku) or sku.lower() == 'nan' or not sku.strip(): continue
+                sku = sku.strip()
+                
+                # Resolve Warehouse (Common for row)
+                wh_code = ""
+                wh_name = ""
+                
+                if col_wh_code != -1 and col_wh_code < len(row):
+                    val = str(row[col_wh_code]).strip()
+                    if val.lower() != 'nan': wh_code = val
+                
+                if col_wh_name != -1 and col_wh_name < len(row):
+                    val = str(row[col_wh_name]).strip()
+                    if val.lower() != 'nan': wh_name = val
+
+                final_wh_id = 'ALL'
+                
+                if wh_code or wh_name:
+                    found = None
+                    # Look in DB map
+                    if wh_code and wh_code.lower() in wh_map_by_code: found = wh_map_by_code[wh_code.lower()]
+                    if not found and wh_name and wh_name.lower() in wh_map_by_name: found = wh_map_by_name[wh_name.lower()]
+                    
+                    # Look in Cache
+                    cache_key = (wh_code.lower() if wh_code else "") + "|" + (wh_name.lower() if wh_name else "")
+                    if not found and cache_key in new_warehouses:
+                         found = new_warehouses[cache_key]
+
+                    if found:
+                        final_wh_id = found.warehouse_id
+                    else:
+                        # Create New Warehouse
+                        if wh_code or wh_name:
+                            new_id = str(uuid.uuid4())
+                            new_wh = DimWarehouses(
+                                warehouse_id=new_id,
+                                warehouse_code=wh_code or ("WH-" + new_id[:8]),
+                                warehouse_name=wh_name or wh_code or "Unknown"
+                            )
+                            new_warehouses[cache_key] = new_wh
+                            if wh_code: wh_map_by_code[wh_code.lower()] = new_wh
+                            if wh_name: wh_map_by_name[wh_name.lower()] = new_wh
+                            db.add(new_wh) 
+                            final_wh_id = new_id
+
+                # EXTRACT QUANTITIES
+                if is_matrix_mode:
+                    # Matrix Mode: Multiple dates per row
+                    for (col_idx, d_obj) in date_cols:
+                        if col_idx < len(row):
+                            try:
+                                val = row[col_idx]
+                                if not pd.isna(val):
+                                    q = float(val)
+                                    updates[(sku, final_wh_id, d_obj)] = q
+                            except: pass
+                else:
+                    # Single Column Mode (Fallback)
+                    qty = 0
+                    if col_qty != -1 and col_qty < len(row):
+                       try:
+                           val = row[col_qty]
+                           if not pd.isna(val): qty = float(val)
+                       except: pass
+                    
+                    # bucket_date default
+                    default_date = date(datetime.now().year, datetime.now().month, 1)
+                    updates[(sku, final_wh_id, default_date)] = qty
+                
+            except Exception as e:
+                errors.append(f"Row {r_idx}: {str(e)}")
+
+        # Flush new warehouses
+        db.flush()
+
+        # 5. Bulk Upsert Inventory
+        # Update BOTH FactRollingInventory (for Planning) AND FactInventorySnapshots (for UI/Record)
+        
+        # A. FactRollingInventory (Existing Logic)
+        involved_dates = set([k[2] for k in updates.keys()])
+        existing_rolling = db.query(FactRollingInventory).filter(
+            FactRollingInventory.bucket_date.in_(involved_dates)
+        ).all()
+        rolling_map = {(r.sku_id, r.warehouse_id, r.bucket_date): r for r in existing_rolling}
+        
+        # B. FactInventorySnapshots (New Logic for UI)
+        existing_snaps = db.query(FactInventorySnapshots).filter(
+            FactInventorySnapshots.snapshot_date.in_(involved_dates)
+        ).all()
+        snap_map = {(r.sku_id, r.warehouse_id, r.snapshot_date): r for r in existing_snaps}
+        
+        count = 0
+        for (sku, wh_id, b_date), qty in updates.items():
+            # 1. Update Rolling
+            if (sku, wh_id, b_date) in rolling_map:
+                rolling_map[(sku, wh_id, b_date)].opening_stock = qty
+                rolling_map[(sku, wh_id, b_date)].updated_at = datetime.now()
+            else:
+                new_roll = FactRollingInventory(
+                    sku_id=sku,
+                    warehouse_id=wh_id,
+                    bucket_date=b_date,
+                    opening_stock=qty,
+                    updated_at=datetime.now()
+                )
+                db.add(new_roll)
+            
+            # 2. Update Snapshot
+            if (sku, wh_id, b_date) in snap_map:
+                snap_map[(sku, wh_id, b_date)].quantity_on_hand = qty
+                # snap_map[(sku, wh_id, b_date)].updated_at = datetime.now() 
+            else:
+                new_snap = FactInventorySnapshots(
+                    snapshot_date=b_date,
+                    sku_id=sku,
+                    warehouse_id=wh_id,
+                    quantity_on_hand=qty,
+                    quantity_on_order=0,
+                    quantity_allocated=0,
+                    unit='Unknown', # Will resolve from Product
+                    notes='Imported Opening Stock'
+                )
+                db.add(new_snap)
+                
+            count += 1
+            
+        db.commit()
+        return count, errors
+
+    except Exception as e:
+        db.rollback()
+        print(f"Global Import Error: {e}")
+        return 0, [str(e)]
+
 # --- Endpoints ---
 
 @router.get("/inventory")
@@ -364,17 +603,30 @@ def get_inventory(
     limit: int = 50,
     search: Optional[str] = None,
     date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     warehouse_id: Optional[str] = None,
     group_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
-    Get inventory snapshots with product names.
+    Get inventory snapshots filtered by date range.
     """
+    # Join with Product first
     query = db.query(
         FactInventorySnapshots, 
-        DimProducts.product_name
-    ).outerjoin(DimProducts, FactInventorySnapshots.sku_id == DimProducts.sku_id)
+        DimProducts.product_name,
+        DimProducts.unit.label('product_unit'),
+        DimProducts.group_id,
+        DimWarehouses.warehouse_name,
+        DimProductGroups.group_name
+    ).outerjoin(
+        DimProducts, FactInventorySnapshots.sku_id == DimProducts.sku_id
+    ).outerjoin(
+        DimWarehouses, FactInventorySnapshots.warehouse_id == DimWarehouses.warehouse_id
+    ).outerjoin(
+        DimProductGroups, DimProducts.group_id == DimProductGroups.group_id
+    )
 
     if search:
         st = f"%{search}%"
@@ -383,38 +635,491 @@ def get_inventory(
             (DimProducts.product_name.ilike(st))
         )
     
+    # Backward compatibility for single date
     if date:
         query = query.filter(FactInventorySnapshots.snapshot_date == date)
+    
+    # Range Filtering
+    if start_date:
+        query = query.filter(FactInventorySnapshots.snapshot_date >= start_date)
+    if end_date:
+        query = query.filter(FactInventorySnapshots.snapshot_date <= end_date)
 
     if warehouse_id and warehouse_id != 'ALL':
         query = query.filter(FactInventorySnapshots.warehouse_id == warehouse_id)
 
+    
     if group_id and group_id != 'ALL':
         query = query.filter(DimProducts.group_id == group_id)
     
-    # Default sort: Date Desc, SKU Asc
-    query = query.order_by(FactInventorySnapshots.snapshot_date.desc(), FactInventorySnapshots.sku_id.asc())
-    
+    # Sort by recent date first
     total = query.count()
-    results = query.offset(skip).limit(limit).all()
     
-    data = []
-    for snap, pname in results:
-        data.append({
+    # Calculate Aggregates (Sum of visible dataset based on filters)
+    from sqlalchemy import func
+    aggs = query.with_entities(
+        func.sum(FactInventorySnapshots.quantity_on_hand).label('total_on_hand'),
+        func.sum(FactInventorySnapshots.quantity_on_order).label('total_on_order'),
+        func.sum(FactInventorySnapshots.quantity_allocated).label('total_allocated')
+    ).first()
+    
+    aggregates = {
+        "total_on_hand": aggs.total_on_hand or 0,
+        "total_on_order": aggs.total_on_order or 0,
+        "total_allocated": aggs.total_allocated or 0
+    }
+
+    # Apply pagination
+    paginated_query = query.order_by(
+        FactInventorySnapshots.snapshot_date.desc(), 
+        FactInventorySnapshots.sku_id.asc()
+    ).offset(skip).limit(limit)
+    
+    data = paginated_query.all()
+    
+    result = []
+    for row in data:
+        snap = row[0]
+        p_name = row[1] or ""
+        p_unit = row[2]
+        w_name = row[4] or snap.warehouse_id 
+        g_name = row[5] or ""
+        
+        final_unit = snap.unit
+        if not final_unit or final_unit.lower() == 'unknown':
+            final_unit = p_unit
+        
+        result.append({
             "snapshot_date": snap.snapshot_date.isoformat(),
             "warehouse_id": snap.warehouse_id,
+            "warehouse_name": w_name,
             "sku_id": snap.sku_id,
-            "product_name": pname,
+            "product_name": p_name,
+            "group_name": g_name,
             "quantity_on_hand": snap.quantity_on_hand,
             "quantity_on_order": snap.quantity_on_order,
+            "quantity_allocated": snap.quantity_allocated,
+            "unit": final_unit,
             "notes": snap.notes
         })
         
-    return {"data": data, "total": total}
+    return {
+        "data": result, 
+        "total": total,
+        "aggregates": aggregates
+    }
+
+@router.get("/sales")
+def get_sales(
+    skip: int = 0,
+    limit: int = 50,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get FactSales list.
+    """
+    from backend.models import FactSales
+    
+    query = db.query(FactSales, DimProducts.product_name)\
+        .outerjoin(DimProducts, FactSales.sku_id == DimProducts.sku_id)
+        
+    if search:
+        st = f"%{search}%"
+        query = query.filter(
+            (FactSales.sku_id.ilike(st)) | 
+            (DimProducts.product_name.ilike(st)) | 
+            (FactSales.transaction_id.ilike(st))
+        )
+        
+    if start_date:
+        query = query.filter(FactSales.order_date >= start_date)
+    if end_date:
+        query = query.filter(FactSales.order_date <= end_date)
+        
+    total = query.count()
+    
+    data = query.order_by(FactSales.order_date.desc()).offset(skip).limit(limit).all()
+    
+    result = []
+    for row in data:
+        sale = row[0]
+        p_name = row[1] or "(Unknown Product)"
+        
+        result.append({
+            "transaction_id": sale.transaction_id,
+            "order_date": sale.order_date.strftime("%Y-%m-%d") if sale.order_date else None,
+            "sku_id": sale.sku_id,
+            "product_name": p_name,
+            "quantity": sale.quantity,
+            "amount": float(sale.amount or 0),
+            "customer_id": sale.customer_id,
+            "source": sale.source,
+            "extra_data": sale.extra_data
+        })
+        
+    return {"data": result, "total": total}
+
+@router.get("/purchases")
+def get_purchases(
+    skip: int = 0,
+    limit: int = 50,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    type: Optional[str] = None, # ACTUAL / PLANNED
+    db: Session = Depends(get_db)
+):
+    """
+    Get FactPurchases list.
+    """
+    from backend.models import FactPurchases
+    
+    query = db.query(FactPurchases, DimProducts.product_name)\
+        .outerjoin(DimProducts, FactPurchases.sku_id == DimProducts.sku_id)
+        
+    if search:
+        st = f"%{search}%"
+        query = query.filter(
+            (FactPurchases.sku_id.ilike(st)) | 
+            (DimProducts.product_name.ilike(st)) | 
+            (FactPurchases.order_id.ilike(st))
+        )
+        
+    if start_date:
+        query = query.filter(FactPurchases.order_date >= start_date)
+    if end_date:
+        query = query.filter(FactPurchases.order_date <= end_date)
+    
+    if type and type != 'ALL':
+        query = query.filter(FactPurchases.purchase_type == type)
+        
+    total = query.count()
+    
+    data = query.order_by(FactPurchases.order_date.desc()).offset(skip).limit(limit).all()
+    
+    result = []
+    for row in data:
+        pur = row[0]
+        p_name = row[1] or "(Unknown Product)"
+        
+        result.append({
+            "transaction_id": pur.transaction_id,
+            "order_date": pur.order_date.strftime("%Y-%m-%d") if pur.order_date else None,
+            "sku_id": pur.sku_id,
+            "product_name": p_name,
+            "quantity": pur.quantity,
+            "purchase_type": pur.purchase_type,
+            "order_id": pur.order_id,
+            "source": pur.source,
+            "extra_data": pur.extra_data
+        })
+        
+    return {"data": result, "total": total}
+
+@router.get("/rolling-raw")
+def get_rolling_raw(
+    skip: int = 0,
+    limit: int = 50,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get Raw FactRollingInventory list.
+    """
+    from backend.models import FactRollingInventory
+    
+    query = db.query(FactRollingInventory, DimProducts.product_name)\
+        .outerjoin(DimProducts, FactRollingInventory.sku_id == DimProducts.sku_id)
+        
+    if search:
+        st = f"%{search}%"
+        query = query.filter(
+            (FactRollingInventory.sku_id.ilike(st)) | 
+            (DimProducts.product_name.ilike(st))
+        )
+        
+    if start_date:
+        query = query.filter(FactRollingInventory.bucket_date >= start_date)
+    if end_date:
+        query = query.filter(FactRollingInventory.bucket_date <= end_date)
+        
+    total = query.count()
+    
+    data = query.order_by(FactRollingInventory.bucket_date.desc(), FactRollingInventory.sku_id.asc()).offset(skip).limit(limit).all()
+    
+    result = []
+    for row in data:
+        rec = row[0]
+        p_name = row[1] or "(Unknown Product)"
+        
+        result.append({
+            "bucket_date": rec.bucket_date.isoformat(),
+            "sku_id": rec.sku_id,
+            "product_name": p_name,
+            "warehouse_id": rec.warehouse_id,
+            "opening_stock": rec.opening_stock,
+            "forecast_demand": rec.forecast_demand,
+            "incoming_supply": rec.incoming_supply,
+            "planned_supply": rec.planned_supply,
+            "actual_sold_qty": rec.actual_sold_qty,
+            "actual_imported_qty": rec.actual_imported_qty,
+            "closing_stock": rec.closing_stock,
+            "net_requirement": rec.net_requirement,
+            "status": rec.status
+        })
+        
+    return {"data": result, "total": total}
+
+# --- Import Processors ---
+
+
+def process_sales_details_file(df: pd.DataFrame, db: Session):
+    """
+    Import "So_chi_tiet_ban_hang" into FactSales.
+    Expected Columns (Vietnamese):
+    - Ngày chứng từ (Date)
+    - Số chứng từ (Transaction ID)
+    - Mã hàng (SKU)
+    - Số lượng (Quantity)
+    - Thành tiền (Amount - Optional)
+    - Mã đối tượng (Customer ID - Optional)
+    """
+    from backend.models import FactSales
+    count = 0
+    errors = []
+    
+    # 1. Normalize Header (Find header row)
+    # Similar to process_opening_stock_file, we might need to search for keywords if header isn't at row 0.
+    # Simple check for 'Mã hàng' or 'sku'
+    # For now, let's assume standard format or try to find it.
+    
+    # Simple header search
+    data = df
+    header_found = False
+    
+    # Keywords
+    sku_keys = ['mã hàng', 'ma_hang', 'sku', 'product code']
+    date_keys = ['ngày chứng từ', 'ngay_ct', 'date', 'ngay chung tu']
+    qty_keys = ['số lượng', 'so_luong', 'quantity', 'qty']
+    
+    # Try to find header row index
+    for i, row in df.head(10).iterrows():
+        row_str = [str(x).lower().strip() for x in row.values]
+        has_sku = any(k in val for k in sku_keys for val in row_str)
+        has_date = any(k in val for k in date_keys for val in row_str)
+        
+        if has_sku and has_date:
+             # Found header
+             df.columns = df.iloc[i] # Set header
+             data = df.iloc[i+1:] # Data starts after header
+             header_found = True
+             break
+    
+    if not header_found:
+        # Fallback: Assume row 0 is header involved if not found
+        pass
+    
+    # Normalize Columns
+    data.columns = [str(c).strip().lower() for c in data.columns]
+    
+    # Normalize Header
+    df.columns = [str(c).strip() for c in df.columns]
+    
+    # Mapping
+    col_date = next((c for c in df.columns if 'ngày' in c.lower() and 'chứng từ' in c.lower()), None)
+    col_tx = next((c for c in df.columns if 'số' in c.lower() and 'chứng từ' in c.lower()), None)
+    col_sku = next((c for c in df.columns if 'mã' in c.lower() and 'hàng' in c.lower()), None)
+    col_qty = next((c for c in df.columns if 'số' in c.lower() and 'lượng' in c.lower()), None)
+    col_amount = next((c for c in df.columns if 'thành' in c.lower() and 'tiền' in c.lower()), None)
+    col_customer = next((c for c in df.columns if 'mã' in c.lower() and 'đối tượng' in c.lower()), None)
+    
+    if not col_sku or not col_qty:
+        return 0, ["Missing crucial columns: 'Mã hàng', 'Số lượng'"]
+
+    # Partition Swap Logic: Delete existing data for date range in file
+    try:
+        if col_date:
+            valid_dates = pd.to_datetime(df[col_date], errors='coerce').dropna()
+            if not valid_dates.empty:
+                min_date = valid_dates.min().date()
+                max_date = valid_dates.max().date()
+                db.query(FactSales).filter(
+                    FactSales.order_date >= min_date,
+                    FactSales.order_date <= max_date,
+                    FactSales.source == 'IMPORT_FILE'
+                ).delete(synchronize_session=False)
+                db.flush()
+    except Exception as e:
+        print(f"Warning: Partition swap failed: {e}")
+
+    for index, row in df.iterrows():
+        try:
+            sku = str(row[col_sku]).strip()
+            if not sku or sku.lower() == 'nan': continue
+            
+            qty = 0
+            try:
+                qty = float(row[col_qty])
+            except: pass
+            
+            amt = 0
+            if col_amount:
+                try: amt = float(row[col_amount])
+                except: pass
+                
+            # Date
+            tx_date = datetime.now()
+            if col_date:
+                try:
+                    d = pd.to_datetime(row[col_date], dayfirst=True)
+                    if not pd.isna(d): tx_date = d
+                except: pass
+            
+            # Tx ID
+            tx_id = f"IMP-SALE-{index}"
+            if col_tx:
+                val = str(row[col_tx]).strip()
+                if val and val.lower() != 'nan': tx_id = val
+                
+            # Extra Data
+            unmapped = [c for c in df.columns if c not in [col_date, col_tx, col_sku, col_qty, col_amount, col_customer]]
+            extra = {}
+            for c in unmapped:
+                val = row[c]
+                if not pd.isna(val): extra[c] = str(val)
+            extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
+            
+            # Final ID
+            final_id = f"{tx_id}_{sku}_{index}"
+            
+            new_sale = FactSales(
+                transaction_id=final_id,
+                sku_id=sku,
+                order_date=tx_date,
+                quantity=qty,
+                amount=amt,
+                source='IMPORT_FILE',
+                extra_data=extra_json
+            )
+            db.add(new_sale)
+            count += 1
+            
+            if count % 100 == 0: db.flush()
+            
+        except Exception as e:
+            errors.append(f"Row {index}: {str(e)}")
+            
+    try:
+        db.commit()
+    except:
+        db.rollback()
+        raise
+        
+    return count, errors
+
+def process_purchase_details_file(df: pd.DataFrame, db: Session):
+    """
+    Import "So_chi_tiet_mua_hang" into FactPurchases.
+    """
+    from backend.models import FactPurchases
+    count = 0
+    errors = []
+    
+    df.columns = [str(c).strip() for c in df.columns]
+    
+    col_date = next((c for c in df.columns if 'ngày' in c.lower() and 'chứng từ' in c.lower()), None)
+    col_tx = next((c for c in df.columns if 'số' in c.lower() and 'chứng từ' in c.lower()), None)
+    col_sku = next((c for c in df.columns if 'mã' in c.lower() and 'hàng' in c.lower()), None)
+    
+    # Actual vs Planned columns? 
+    # Usually "Số lượng" is actual/stock affecting.
+    # If there is "Số lượng đơn hàng" it might be planned.
+    # For now assume Standard Import is ACTUAL.
+    col_qty = next((c for c in df.columns if 'số' in c.lower() and 'lượng' in c.lower()), None)
+    
+    if not col_sku or not col_qty:
+         return 0, ["Missing crucial columns: 'Mã hàng', 'Số lượng'"]
+         
+    # Partition Swap
+    try:
+        if col_date:
+            valid_dates = pd.to_datetime(df[col_date], errors='coerce').dropna()
+            if not valid_dates.empty:
+                min_date = valid_dates.min().date()
+                max_date = valid_dates.max().date()
+                db.query(FactPurchases).filter(
+                    FactPurchases.order_date >= min_date,
+                    FactPurchases.order_date <= max_date,
+                    FactPurchases.source == 'IMPORT_FILE'
+                ).delete(synchronize_session=False)
+                db.flush()
+    except Exception as e:
+        print(f"Warning: Partition swap failed: {e}")
+        
+    for index, row in df.iterrows():
+        try:
+            sku = str(row[col_sku]).strip()
+            if not sku or sku.lower() == 'nan': continue
+            
+            qty = 0
+            try: qty = float(row[col_qty])
+            except: pass
+            
+            tx_date = datetime.now()
+            if col_date:
+                try:
+                    d = pd.to_datetime(row[col_date], dayfirst=True)
+                    if not pd.isna(d): tx_date = d
+                except: pass
+                
+            tx_id = f"IMP-PUR-{index}"
+            if col_tx:
+                val = str(row[col_tx]).strip()
+                if val and val.lower() != 'nan': tx_id = val
+            
+            # Extra
+            unmapped = [c for c in df.columns if c not in [col_date, col_tx, col_sku, col_qty]]
+            extra = {}
+            for c in unmapped:
+                val = row[c]
+                if not pd.isna(val): extra[c] = str(val)
+            extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
+            
+            final_id = f"{tx_id}_{sku}_{index}"
+            
+            new_pur = FactPurchases(
+                transaction_id=final_id,
+                sku_id=sku,
+                order_date=tx_date,
+                quantity=qty,
+                purchase_type='ACTUAL', # Default to Actual for historical import
+                order_id=tx_id,
+                source='IMPORT_FILE',
+                extra_data=extra_json
+            )
+            db.add(new_pur)
+            count += 1
+            if count % 100 == 0: db.flush()
+            
+        except Exception as e:
+             errors.append(f"Row {index}: {str(e)}")
+             
+    try:
+        db.commit()
+    except:
+        db.rollback()
+        raise
+        
+    return count, errors
 
 @router.post("/import/upload")
 async def upload_file(
-    type: str, # 'products' | 'vendors' | 'plans' | 'groups' | 'warehouses' | 'units'
+    type: str, # 'products' | 'vendors' | 'plans' | 'groups' | 'warehouses' | 'units' | 'sales_details'
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
@@ -434,11 +1139,16 @@ async def upload_file(
                 except:
                     df = pd.read_csv(io.BytesIO(contents), encoding='cp1252')
         elif file.filename.endswith(('.xls', '.xlsx')):
-            df = pd.read_excel(io.BytesIO(contents))
+            try:
+                 df = pd.read_excel(io.BytesIO(contents))
+            except Exception as e:
+                 # Fallback for weird excel formats?
+                 raise HTTPException(status_code=400, detail=f"Excel read error: {e}")
         else:
             raise HTTPException(status_code=400, detail=f"Invalid file format: {file.filename}")
             
         records_processed = 0
+        warnings = []
         
         # Normalize type checking just in case
         t = type.lower().strip()
@@ -457,11 +1167,30 @@ async def upload_file(
             records_processed = process_customers_file(df, db)
         elif t == 'partner-groups':
             records_processed = process_partner_groups_file(df, db)
+        elif t == 'opening_stock': 
+            res = process_opening_stock_file(df, db)
+            if isinstance(res, tuple):
+                records_processed, warnings = res
+            else:
+                records_processed = res
+        elif t == 'sales_details':
+             count, errors = process_sales_details_file(df, db)
+             records_processed = count
+             warnings = errors
+        elif t == 'purchase_details':
+             count, errors = process_purchase_details_file(df, db)
+             records_processed = count
+             warnings = errors
         else:
-            print(f"[IMPORT-ERROR] Unknown type: {t}")
-            raise HTTPException(status_code=400, detail=f"Unknown import type: {type}")
-            
-        return {"status": "success", "message": f"Processed {records_processed} records."}
+            raise HTTPException(status_code=400, detail="Invalid type")
+
+        resp = {"status": "success", "message": f"Processed {records_processed} records."}
+        if warnings:
+            resp["warnings"] = warnings[:20] # Return first 20 errors
+            if records_processed == 0:
+                resp["message"] = f"Failed to import. Errors: {'; '.join(warnings[:3])}"
+        
+        return resp
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -759,9 +1488,7 @@ def get_partner_groups(db: Session = Depends(get_db)):
     return db.query(DimCustomerGroups).all()
 
 
-@router.get("/warehouses")
-def get_warehouses(db: Session = Depends(get_db)):
-    return db.query(DimWarehouses).all()
+
 
 @router.post("/warehouses")
 def create_warehouse(item: WarehouseCreate, db: Session = Depends(get_db)):
@@ -792,6 +1519,21 @@ def delete_warehouse(id: str, db: Session = Depends(get_db)):
     db.delete(db_item)
     db.commit()
     return {"message": "Deleted locally"}
+
+@router.get("/warehouses")
+def get_warehouses(
+    skip: int = 0, 
+    limit: int = 100,
+    search: str = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(DimWarehouses)
+    if search:
+        query = query.filter(DimWarehouses.warehouse_name.ilike(f"%{search}%"))
+    
+    # SQL Server requires ORDER BY for OFFSET/LIMIT
+    items = query.order_by(DimWarehouses.warehouse_id).offset(skip).limit(limit).all()
+    return items
 
 @router.get("/profiles")
 def get_profiles(db: Session = Depends(get_db)):

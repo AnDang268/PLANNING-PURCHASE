@@ -6,18 +6,20 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Loader2, Search, ArrowLeft, ArrowRight, Check, ChevronsUpDown, Filter, Download, Upload, FileDown } from "lucide-react"
+import { Loader2, Search, ArrowLeft, ArrowRight, Check, ChevronsUpDown, Filter, Download, Upload, FileDown, RefreshCw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/components/ui/use-toast"
 
 interface InventoryItem {
     snapshot_date: string
     warehouse_id: string
+    warehouse_name: string
     sku_id: string
     product_name: string
+    group_name: string
     quantity_on_hand: number
     quantity_on_order: number
     quantity_allocated: number
@@ -35,15 +37,25 @@ interface ProductGroup {
     group_name: string
 }
 
+import { format } from "date-fns"
+import { PeriodFilter, DateRange } from "@/components/PeriodFilter"
+
 export default function InventoryPage() {
     const [data, setData] = useState<InventoryItem[]>([])
     const [loading, setLoading] = useState(true)
     const [page, setPage] = useState(1)
     const [total, setTotal] = useState(0)
+    const [aggregates, setAggregates] = useState({ total_on_hand: 0, total_on_order: 0, total_allocated: 0 })
     const { toast } = useToast()
 
     // Filters
-    const [dateFilter, setDateFilter] = useState<string>("")
+    // Default to this year
+    const currentYear = new Date().getFullYear()
+    const [dateRange, setDateRange] = useState<DateRange>({
+        from: new Date(currentYear, 0, 1),
+        to: new Date(currentYear, 11, 31)
+    })
+
     const [search, setSearch] = useState("")
     const [warehouseFilter, setWarehouseFilter] = useState("ALL")
     const [groupFilter, setGroupFilter] = useState("ALL")
@@ -79,7 +91,10 @@ export default function InventoryPage() {
             const params = new URLSearchParams()
             params.append('skip', skip.toString())
             params.append('limit', limit.toString())
-            if (dateFilter) params.append('date', dateFilter)
+
+            if (dateRange.from) params.append('start_date', format(dateRange.from, 'yyyy-MM-dd'))
+            if (dateRange.to) params.append('end_date', format(dateRange.to, 'yyyy-MM-dd'))
+
             if (search) params.append('search', search)
             if (warehouseFilter && warehouseFilter !== 'ALL') params.append('warehouse_id', warehouseFilter)
             if (groupFilter && groupFilter !== 'ALL') params.append('group_id', groupFilter)
@@ -91,6 +106,7 @@ export default function InventoryPage() {
                 const json = await res.json()
                 setData(json.data)
                 setTotal(json.total)
+                if (json.aggregates) setAggregates(json.aggregates)
             } else {
                 console.error("Fetch returned", res.status)
             }
@@ -103,7 +119,7 @@ export default function InventoryPage() {
 
     useEffect(() => {
         fetchData()
-    }, [page, dateFilter, warehouseFilter, groupFilter]) // Auto-refresh on filters
+    }, [page, dateRange, warehouseFilter, groupFilter])
 
     const handleSearch = () => {
         setPage(1)
@@ -116,21 +132,7 @@ export default function InventoryPage() {
 
     const handleExport = () => {
         // Build export URL with current filters
-        const params = new URLSearchParams()
-        if (dateFilter) params.append('date', dateFilter)
-        if (search) params.append('search', search)
-        if (warehouseFilter && warehouseFilter !== 'ALL') params.append('warehouse_id', warehouseFilter)
-        if (groupFilter && groupFilter !== 'ALL') params.append('group_id', groupFilter)
-
-        // Use download endpoint or just re-use fetch? 
-        // We don't have a specific export endpoint for inventory query results yet, 
-        // typically users export what they assume is the full list.
-        // For now, let's standardise on a "export_inventory" endpoint if it exists, or client side?
-        // Let's implement client-side export of CURRENT view or create a backend endpoint?
-        // Given complexity, let's skip complex export for now or just trigger a CSV dump if backend supports it.
-        // Let's assume we want to download the template for now as that's critical for Import.
-        // The user asked for "import screen", let's prioritize Import.
-        // But I will add the buttons.
+        // TODO: Implement proper export
     }
 
     const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -164,6 +166,24 @@ export default function InventoryPage() {
         }
     }
 
+    const handleSync = async () => {
+        setLoading(true)
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/data/crm/sync-inventory`, { method: 'POST' })
+            if (res.ok) {
+                toast({ title: "Sync Started", description: "Inventory sync running in background..." })
+                setTimeout(fetchData, 2000)
+            } else {
+                toast({ title: "Sync Failed", variant: "destructive" })
+            }
+        } catch (e) {
+            console.error(e)
+            toast({ title: "Sync Error", variant: "destructive" })
+        } finally {
+            setLoading(false)
+        }
+    }
+
     const totalPages = Math.ceil(total / 20)
 
     return (
@@ -179,6 +199,9 @@ export default function InventoryPage() {
                     <div className="flex flex-col gap-4 mt-4">
                         {/* Actions Row */}
                         <div className="flex gap-2 justify-end">
+                            <Button variant="outline" size="sm" onClick={handleSync}>
+                                <RefreshCw className="mr-2 h-4 w-4" /> Sync from Misa
+                            </Button>
                             <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
                                 <FileDown className="mr-2 h-4 w-4" /> Template
                             </Button>
@@ -197,16 +220,8 @@ export default function InventoryPage() {
 
                         <div className="flex flex-col md:flex-row gap-4 justify-between">
                             <div className="flex flex-wrap gap-2 items-center flex-1">
-                                {/* Date Filter */}
-                                <input
-                                    type="date"
-                                    className="border rounded px-2 py-2 text-sm bg-background w-[150px]"
-                                    value={dateFilter}
-                                    onChange={(e) => {
-                                        setDateFilter(e.target.value)
-                                        setPage(1)
-                                    }}
-                                />
+                                {/* Period Filter */}
+                                <PeriodFilter onFilterChange={(r) => { setDateRange(r); setPage(1); }} />
 
                                 {/* Warehouse Filter */}
                                 <Select value={warehouseFilter} onValueChange={(v) => { setWarehouseFilter(v); setPage(1); }}>
@@ -339,10 +354,11 @@ export default function InventoryPage() {
                                                 <div className="text-xs text-muted-foreground">{item.sku_id}</div>
                                             </TableCell>
                                             <TableCell>
-                                                {/* We don't have group name in item yet, assume user knows or add to backend later */}
-                                                <span className="text-muted-foreground">-</span>
+                                                <div className="text-sm">{item.group_name || "-"}</div>
                                             </TableCell>
-                                            <TableCell>{item.warehouse_id}</TableCell>
+                                            <TableCell>
+                                                <div className="text-sm">{item.warehouse_name || item.warehouse_id}</div>
+                                            </TableCell>
                                             <TableCell className="text-right font-medium">{item.quantity_on_hand.toLocaleString()}</TableCell>
                                             <TableCell className="text-right text-muted-foreground">{item.quantity_on_order.toLocaleString()}</TableCell>
                                             <TableCell className="text-right text-muted-foreground">{item.quantity_allocated?.toLocaleString() || 0}</TableCell>
@@ -353,6 +369,15 @@ export default function InventoryPage() {
                                 })
                             )}
                         </TableBody>
+                        <TableFooter>
+                            <TableRow className="bg-muted font-medium">
+                                <TableCell colSpan={4}>Total</TableCell>
+                                <TableCell className="text-right">{aggregates.total_on_hand.toLocaleString()}</TableCell>
+                                <TableCell className="text-right text-muted-foreground">{aggregates.total_on_order.toLocaleString()}</TableCell>
+                                <TableCell className="text-right text-muted-foreground">{aggregates.total_allocated.toLocaleString()}</TableCell>
+                                <TableCell colSpan={2}></TableCell>
+                            </TableRow>
+                        </TableFooter>
                     </Table>
 
                     <div className="flex items-center justify-end space-x-2 py-4">

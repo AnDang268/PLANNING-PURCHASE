@@ -14,7 +14,45 @@ import { downloadCSV } from "@/lib/exportUtils"
 interface Group {
     group_id: string
     group_name: string
+    parent_id?: string
     updated_at: string
+    children?: Group[]
+    level?: number
+}
+
+// Helper to build tree from flat list
+function buildGroupTree(groups: Group[]): Group[] {
+    const map: Record<string, Group> = {}
+    const roots: Group[] = []
+
+    // 1. Initialize map
+    groups.forEach(g => {
+        map[g.group_id] = { ...g, children: [], level: 0 }
+    })
+
+    // 2. Build Hierarchy
+    groups.forEach(g => {
+        const node = map[g.group_id]
+        if (g.parent_id && map[g.parent_id]) {
+            map[g.parent_id].children?.push(node)
+        } else {
+            roots.push(node)
+        }
+    })
+
+    return roots
+}
+
+// Helper to flatten tree for table display
+function flattenGroupTree(nodes: Group[], level = 0, result: Group[] = []): Group[] {
+    nodes.forEach(node => {
+        node.level = level
+        result.push(node)
+        if (node.children && node.children.length > 0) {
+            flattenGroupTree(node.children, level + 1, result)
+        }
+    })
+    return result
 }
 
 export default function GroupsPage() {
@@ -31,7 +69,13 @@ export default function GroupsPage() {
         setLoading(true)
         try {
             const res = await fetch(`${API_BASE_URL}/api/data/groups`)
-            if (res.ok) setData(await res.json())
+            if (res.ok) {
+                const flatData = await res.json()
+                // Transform to Tree then Flatten with levels
+                const tree = buildGroupTree(flatData)
+                const sorted = flattenGroupTree(tree)
+                setData(sorted)
+            }
         } catch (e) { console.error(e) }
         finally { setLoading(false) }
     }
@@ -119,7 +163,21 @@ export default function GroupsPage() {
 
     const columns: ColumnDef<Group>[] = [
         { header: "Group ID", accessorKey: "group_id", className: "font-medium" },
-        { header: "Group Name", accessorKey: "group_name" },
+        {
+            header: "Group Name",
+            accessorKey: "group_name",
+            cell: (item) => (
+                <div style={{ paddingLeft: (item.level || 0) * 24 }} className="flex items-center">
+                    {(item.level || 0) > 0 && <span className="text-muted-foreground mr-2">└──</span>}
+                    {item.group_name}
+                </div>
+            )
+        },
+        {
+            header: "Parent ID",
+            accessorKey: "parent_id",
+            cell: (item) => <span className="text-muted-foreground text-xs">{item.parent_id || '-'}</span>
+        },
         {
             header: "Last Updated",
             accessorKey: "updated_at",
@@ -137,7 +195,7 @@ export default function GroupsPage() {
             </div>
             <StandardDataTable
                 title="Product Groups"
-                description="Manage categories."
+                description="Manage categories (Hierarchical View)."
                 data={data}
                 columns={columns}
                 searchKey="group_name"

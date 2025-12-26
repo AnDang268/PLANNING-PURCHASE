@@ -35,20 +35,21 @@ export function Navigation() {
                                 Data Management
                             </Link>
                             <div className="absolute top-full left-0 hidden group-hover:block w-48 bg-white border shadow-lg rounded-md overflow-hidden pt-2">
-                                <div className="flex flex-col">
-                                    <Link href="/dashboard/data/products" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Products</Link>
-                                    <Link href="/dashboard/data/units" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Units</Link>
-                                    <Link href="/dashboard/data/groups" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Product Groups</Link>
-                                    <Link href="/dashboard/data/warehouses" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Warehouses</Link>
-                                    <Link href="/dashboard/data/inventory" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Inventory Snapshots</Link>
-                                    <div className="border-t my-1"></div>
-                                    <Link href="/dashboard/data/partners" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Vendors</Link>
-                                    <Link href="/dashboard/data/customers" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Customers</Link>
-                                    <Link href="/dashboard/data/partner-groups" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Customer Groups</Link>
-                                </div>
+                                <Link href="/dashboard/data/products" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Products</Link>
+                                <Link href="/dashboard/data/sales" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Sales Details</Link>
+                                <Link href="/dashboard/data/purchases" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Purchase Details</Link>
+                                <div className="border-t my-1"></div>
+                                <Link href="/dashboard/data/units" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Units</Link>
+                                <Link href="/dashboard/data/groups" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Product Groups</Link>
+                                <Link href="/dashboard/data/warehouses" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Warehouses</Link>
+                                <Link href="/dashboard/data/inventory" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Inventory Snapshots</Link>
+                                <Link href="/dashboard/data/rolling-inventory" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Rolling Data</Link>
+                                <div className="border-t my-1"></div>
+                                <Link href="/dashboard/data/partners" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Vendors</Link>
+                                <Link href="/dashboard/data/customers" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Customers</Link>
+                                <Link href="/dashboard/data/partner-groups" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Customer Groups</Link>
                             </div>
                         </div>
-
                         <Link href="/reports" className={linkClass("/reports")}>
                             Reports
                         </Link>

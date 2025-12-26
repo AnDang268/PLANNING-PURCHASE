@@ -84,3 +84,41 @@ class MisaCrmV2Client:
                  raise Exception(f"HTTP {resp.status_code}: {resp.text}")
         except Exception as e:
              raise Exception(f"Inventory Fetch Error: {e}")
+
+    def get_inventory_item_categories(self, page=1, page_size=100):
+        """
+        Fetch Inventory Item Categories (Product Groups).
+        Endpoint: /InventoryItemCategories
+        """
+        if not self.token:
+            self.authenticate()
+
+        url = f"{self.base_url}/InventoryItemCategories"
+        headers = {
+            "authorization": f"Bearer {self.token}", 
+            "clientid": self.client_id,
+            "companycode": self.company_code
+        }
+        
+        params = {
+            "page": page,
+            "pageSize": page_size
+        }
+        
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                items_data = data.get("data")
+                
+                if data.get("success") or str(data.get("code")) == "0" or (isinstance(items_data, list) and len(items_data) > 0):
+                    items = items_data if isinstance(items_data, list) else []
+                    return items
+                else:
+                    # Some endpoints return differently, lenient check
+                    return items_data if isinstance(items_data, list) else []
+            else:
+                print(f"DEBUG API ERROR: {resp.status_code} {resp.text}")
+                return []
+        except Exception as e:
+             raise Exception(f"Group Fetch Error: {e}")

@@ -254,8 +254,10 @@ class SyncService:
         
         new_name = data.get('inventory_category_name')
         new_code = data.get('inventory_category_code')
-        # Map Parent ID (Try both 'parent_id' and 'parent_id' from response)
-        new_parent = data.get('parent_id') or data.get('parent_id') # Adjust key if needed based on real payload
+        # Map Parent ID: MISA usually returns 'parent_id' or 'ParentID'
+        new_parent = data.get('parent_id')
+        if not new_parent:
+             new_parent = data.get('ParentID')
         
         if (obj.group_name != new_name or 
             obj.misa_code != new_code or

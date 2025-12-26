@@ -4,15 +4,19 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
+import { cn } from "@/lib/utils"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { TrendingUp, RefreshCw, AlertCircle, Download, FileSpreadsheet } from "lucide-react"
+import { TrendingUp, RefreshCw, AlertCircle, Download, FileSpreadsheet, Check, ChevronsUpDown } from "lucide-react"
 import { API_BASE_URL } from "@/config"
 
 interface Product {
     sku_id: string
     product_name: string
+    group_id?: string
 }
 
 interface Group {
@@ -35,10 +39,18 @@ export default function ForecastingPage() {
     const [selectedSku, setSelectedSku] = useState<string>("")
     const [selectedGroup, setSelectedGroup] = useState<string>("")
 
+    // Combobox states
+    const [productOpen, setProductOpen] = useState(false)
+    const [groupOpen, setGroupOpen] = useState(false)
+    const [filterGroup, setFilterGroup] = useState<string>("ALL") // For filtering Product list
+
     const [model, setModel] = useState<string>("SMA")
     const [chartData, setChartData] = useState<ForecastData[]>([])
     const [loading, setLoading] = useState(false)
     const [running, setRunning] = useState(false)
+
+    // Filtered Products
+    const filteredProducts = products.filter(p => !filterGroup || filterGroup === 'ALL' || p.group_id === filterGroup)
 
     // Load products and groups on mount
     useEffect(() => {
@@ -161,32 +173,114 @@ export default function ForecastingPage() {
                         </div>
 
                         {scope === 'product' ? (
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium">Product</label>
-                                <Select value={selectedSku} onValueChange={setSelectedSku}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select Product" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {products.map(p => (
-                                            <SelectItem key={p.sku_id} value={p.sku_id}>{p.product_name} ({p.sku_id})</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                            <div className="space-y-4">
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">Filter Product List by Group</label>
+                                    <Select value={filterGroup} onValueChange={setFilterGroup}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="All Groups" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="ALL">All Groups</SelectItem>
+                                            {groups.map(g => (
+                                                <SelectItem key={g.group_id} value={g.group_id}>{g.group_name}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="space-y-2 flex flex-col">
+                                    <label className="text-sm font-medium">Product</label>
+                                    <Popover open={productOpen} onOpenChange={setProductOpen}>
+                                        <PopoverTrigger asChild>
+                                            <Button
+                                                variant="outline"
+                                                role="combobox"
+                                                aria-expanded={productOpen}
+                                                className="w-full justify-between"
+                                            >
+                                                {selectedSku
+                                                    ? products.find((p) => p.sku_id === selectedSku)?.product_name
+                                                    : "Select product..."}
+                                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-[300px] p-0 bg-white">
+                                            <Command>
+                                                <CommandInput placeholder="Search product..." />
+                                                <CommandEmpty>No product found.</CommandEmpty>
+                                                <CommandGroup className="max-h-[300px] overflow-y-auto">
+                                                    {filteredProducts.map((p) => (
+                                                        <CommandItem
+                                                            key={p.sku_id}
+                                                            value={p.product_name + " " + p.sku_id} // Enable search by both
+                                                            onSelect={(currentValue) => {
+                                                                setSelectedSku(p.sku_id)
+                                                                setProductOpen(false)
+                                                            }}
+                                                        >
+                                                            <Check
+                                                                className={cn(
+                                                                    "mr-2 h-4 w-4",
+                                                                    selectedSku === p.sku_id ? "opacity-100" : "opacity-0"
+                                                                )}
+                                                            />
+                                                            <div className="flex flex-col">
+                                                                <span>{p.product_name}</span>
+                                                                <span className="text-xs text-muted-foreground">{p.sku_id}</span>
+                                                            </div>
+                                                        </CommandItem>
+                                                    ))}
+                                                </CommandGroup>
+                                            </Command>
+                                        </PopoverContent>
+                                    </Popover>
+                                </div>
                             </div>
                         ) : (
-                            <div className="space-y-2">
+                            <div className="space-y-2 flex flex-col">
                                 <label className="text-sm font-medium">Product Group</label>
-                                <Select value={selectedGroup} onValueChange={setSelectedGroup}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select Group" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {groups.map(g => (
-                                            <SelectItem key={g.group_id} value={g.group_id}>{g.group_name}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                <Popover open={groupOpen} onOpenChange={setGroupOpen}>
+                                    <PopoverTrigger asChild>
+                                        <Button
+                                            variant="outline"
+                                            role="combobox"
+                                            aria-expanded={groupOpen}
+                                            className="w-full justify-between"
+                                        >
+                                            {selectedGroup
+                                                ? groups.find((g) => g.group_id === selectedGroup)?.group_name
+                                                : "Select group..."}
+                                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-[300px] p-0 bg-white">
+                                        <Command>
+                                            <CommandInput placeholder="Search group..." />
+                                            <CommandEmpty>No group found.</CommandEmpty>
+                                            <CommandGroup className="max-h-[300px] overflow-y-auto">
+                                                {groups.map((g) => (
+                                                    <CommandItem
+                                                        key={g.group_id}
+                                                        value={g.group_name}
+                                                        onSelect={(currentValue) => {
+                                                            setSelectedGroup(g.group_id)
+                                                            setGroupOpen(false)
+                                                        }}
+                                                    >
+                                                        <Check
+                                                            className={cn(
+                                                                "mr-2 h-4 w-4",
+                                                                selectedGroup === g.group_id ? "opacity-100" : "opacity-0"
+                                                            )}
+                                                        />
+                                                        {g.group_name}
+                                                    </CommandItem>
+                                                ))}
+                                            </CommandGroup>
+                                        </Command>
+                                    </PopoverContent>
+                                </Popover>
                             </div>
                         )}
 

@@ -15,7 +15,7 @@ export default function PlanningLayout({
     const tabs = [
         { name: "Purchase Plans", href: "/dashboard/planning/purchase-plans" },
         { name: "Demand Forecast", href: "/dashboard/planning/forecast" },
-        { name: "Rolling Matrix", href: "/dashboard/planning/rolling" },
+        { name: "Rolling Forecast", href: "/dashboard/planning/rolling" },
     ]
 
     return (

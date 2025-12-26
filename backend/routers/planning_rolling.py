@@ -34,33 +34,70 @@ def run_rolling_calculation(req: RunCalcRequest, db: Session = Depends(get_db)):
 @router.get("/matrix")
 def get_rolling_matrix(
     category: Optional[str] = None,
+    limit: int = 5000,
+    warehouse_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    # Fetch Data formatted for Matrix (Flattened or List)
-    query = db.query(FactRollingInventory, DimProducts)\
-        .join(DimProducts, FactRollingInventory.sku_id == DimProducts.sku_id)
+    # Retrieve specific columns to avoid implicit join issues and improve performance
+    query = db.query(
+        FactRollingInventory.sku_id,
+        FactRollingInventory.bucket_date,
+        FactRollingInventory.opening_stock,
+        FactRollingInventory.forecast_demand,
+        FactRollingInventory.incoming_supply,
+        FactRollingInventory.planned_supply,
+        FactRollingInventory.closing_stock,
+        FactRollingInventory.net_requirement,
+        FactRollingInventory.min_stock_policy,
+        # FactRollingInventory.status, # Field might not exist in Model? Check model definition. It's often dynamic property.
+        DimProducts.product_name,
+        DimProducts.category
+    ).join(DimProducts, FactRollingInventory.sku_id == DimProducts.sku_id)
         
-    if category:
+    if category and category != 'ALL':
         query = query.filter(DimProducts.category == category)
         
-    # Sort for Matrix: Product -> Date
-    data = query.order_by(FactRollingInventory.sku_id, FactRollingInventory.bucket_date).all()
+    data = query.order_by(FactRollingInventory.sku_id, FactRollingInventory.bucket_date).limit(limit).all()
     
-    # We return flat list, Frontend will pivot it to Matrix (Ag-Grid / TanStack Table)
     result = []
-    for row, prod in data:
+    for row in data:
+        # row is a named tuple now
         result.append({
             "sku_id": row.sku_id,
-            "product_name": prod.product_name,
-            "category": prod.category,
+            "product_name": row.product_name,
+            "category": row.category,
             "bucket_date": row.bucket_date,
             "opening_stock": row.opening_stock,
             "forecast": row.forecast_demand,
             "incoming": row.incoming_supply,
             "planned": row.planned_supply,
             "closing": row.closing_stock,
-            "status": row.status,
+            "status": "NORMAL", # Placeholder or calc logic
             "net_req": row.net_requirement,
-            "dos": row.closing_stock # Simplified DOS (Day of Supply) output if needed
+            "dos": row.closing_stock
         })
     return result
+
+from backend.models import PlanningPolicies
+
+@router.get("/policies")
+def get_planning_policies(db: Session = Depends(get_db)):
+    """Fetch all planning policies"""
+    return db.query(PlanningPolicies).all()
+
+class UpdatePolicyRequest(BaseModel):
+    safety_stock_days: int
+    service_level_target: float
+
+@router.put("/policies/{policy_id}")
+def update_planning_policy(policy_id: int, req: UpdatePolicyRequest, db: Session = Depends(get_db)):
+    """Update safety stock configuration"""
+    policy = db.query(PlanningPolicies).filter(PlanningPolicies.policy_id == policy_id).first()
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    
+    policy.safety_stock_days = req.safety_stock_days
+    policy.service_level_target = req.service_level_target
+    db.commit()
+    
+    return {"status": "success", "message": "Policy updated", "policy": policy}

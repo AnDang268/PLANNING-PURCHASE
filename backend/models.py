@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, Integer, Float, DateTime, Boolean, Date, Text, DECIMAL, CHAR, ForeignKey
 from sqlalchemy.dialects.mssql import NVARCHAR
 from sqlalchemy.sql import func
+from datetime import datetime
 from backend.database import Base
 
 class DimUnits(Base):
@@ -83,6 +84,7 @@ class DimVendors(Base):
 class DimWarehouses(Base):
     __tablename__ = "Dim_Warehouses"
     warehouse_id = Column(NVARCHAR(50), primary_key=True)
+    warehouse_code = Column(NVARCHAR(50)) # Added for Excel Mapping (e.g. 66ADV)
     warehouse_name = Column(NVARCHAR(255))
     address = Column(NVARCHAR(500))
     branch_id = Column(NVARCHAR(50))
@@ -98,7 +100,28 @@ class FactSales(Base):
     amount = Column(DECIMAL(18, 2))
     customer_id = Column(NVARCHAR(50))
     is_promotion = Column(Boolean, default=False)
+    is_promotion = Column(Boolean, default=False)
     source = Column(NVARCHAR(20), default='MISA')
+    order_date = Column(DateTime)
+    quantity = Column(Float)
+    amount = Column(DECIMAL(18, 2))
+    customer_id = Column(NVARCHAR(50))
+    is_promotion = Column(Boolean, default=False)
+    source = Column(NVARCHAR(20), default='MISA')
+    extra_data = Column(Text, nullable=True) # JSON store for unmapped columns
+
+class FactPurchases(Base):
+    __tablename__ = "Fact_Purchases"
+    transaction_id = Column(NVARCHAR(50), primary_key=True) # Unique ID (e.g. DocNo_SKU)
+    sku_id = Column(NVARCHAR(50), ForeignKey("Dim_Products.sku_id"))
+    order_date = Column(DateTime)
+    quantity = Column(Float)
+    purchase_type = Column(NVARCHAR(20)) # 'ACTUAL' (Received) or 'PLANNED' (Confirmed Order/In Transit)
+    order_id = Column(NVARCHAR(50)) # Doc No
+    vendor_id = Column(NVARCHAR(50), nullable=True)
+    source = Column(NVARCHAR(20), default='IMPORT_FILE')
+    extra_data = Column(Text, nullable=True) # JSON store
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class FactInventorySnapshots(Base):
     __tablename__ = "Fact_Inventory_Snapshots"
@@ -187,15 +210,19 @@ class FactRollingInventory(Base):
     __tablename__ = "Fact_Rolling_Inventory"
     planning_id = Column(Integer, primary_key=True, index=True)
     sku_id = Column(NVARCHAR(50), nullable=False, index=True)
+    warehouse_id = Column(NVARCHAR(50), default='ALL', index=True) # Added for Granular Planning
     bucket_date = Column(Date, nullable=False, index=True) # Start of Week/Month
     opening_stock = Column(Float, default=0)
     forecast_demand = Column(Float, default=0)
     incoming_supply = Column(Float, default=0) # Confirmed PO
     planned_supply = Column(Float, default=0)  # User/System Suggestion
+    actual_sold_qty = Column(Float, default=0) # Actual Sales from Sales Book
+    actual_imported_qty = Column(Float, default=0) # Actual Import from Warehouse/PO
     closing_stock = Column(Float, default=0)
     min_stock_policy = Column(Float, default=0) # Safety Stock Snapshot
     net_requirement = Column(Float, default=0)
     status = Column(NVARCHAR(20), default='OK') # OK, LOW, CRITICAL
+    is_manual_opening = Column(Boolean, default=False) # Flag to respect user override
     updated_at = Column(DateTime, default=func.now())
 
 class PlanningDistributionProfile(Base):

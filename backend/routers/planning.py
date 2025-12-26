@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from sqlalchemy import desc
+from typing import Dict, Any, List
 import pandas as pd
-
+from datetime import date, datetime
+from pydantic import BaseModel
 
 from backend.database import get_db
 from backend.services.planning_engine import PlanningEngine
 from backend.services.forecasting import ForecastingEngine
+from backend.models import FactRollingInventory
 
 router = APIRouter(
     prefix="/api/planning",
@@ -125,10 +128,6 @@ def export_forecast_excel(
     stream = io.BytesIO()
     with pd.ExcelWriter(stream, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Forecast Data')
-        # Auto-adjust columns logic differs for openpyxl, but let's keep it simple for now or use openpyxl methods
-        # For openpyxl, we access the sheet differently
-        # worksheet = writer.sheets['Forecast Data']
-        # worksheet.column_dimensions['A'].width = 15
         
     stream.seek(0)
     
@@ -137,6 +136,30 @@ def export_forecast_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+@router.get("/rolling/matrix")
+def get_rolling_matrix(
+    limit: int = 100,
+    search: str = None,
+    group_id: str = None,
+    warehouse_id: str = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get Rolling Inventory Matrix (Pivot View).
+    """
+    engine = PlanningEngine(db)
+    try:
+        data = engine.get_rolling_inventory_matrix(limit=limit, search=search, group_id=group_id, warehouse_id=warehouse_id)
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/rolling/profiles")
+def get_planning_profiles(db: Session = Depends(get_db)):
+    """Fetch profiles for Rolling Inventory Filters"""
+    from backend.models import PlanningDistributionProfile
+    return db.query(PlanningDistributionProfile).filter(PlanningDistributionProfile.is_active == True).all()
 
 @router.get("/forecast/{sku_id}")
 def get_forecast_data_legacy(sku_id: str, db: Session = Depends(get_db)):
@@ -229,6 +252,116 @@ def approve_plan_endpoint(
         result = engine.approve_plan(plan_id)
         return result
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/plans/{plan_id}")
+def delete_plan_endpoint(
+    plan_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a draft purchase plan.
+    """
+    engine = PlanningEngine(db)
+    try:
+        result = engine.delete_plan(plan_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class RollingUpdateItem(BaseModel):
+    sku_id: str
+    warehouse_id: str
+    bucket_date: date
+    planned_supply: float
+
+@router.post("/rolling/update")
+def update_rolling_forecast(
+    updates: List[RollingUpdateItem],
+    db: Session = Depends(get_db)
+):
+    """
+    Bulk update planned_supply in Rolling Matrix.
+    """
+    try:
+        count = 0
+        for item in updates:
+            rec = db.query(FactRollingInventory).filter(
+                FactRollingInventory.sku_id == item.sku_id,
+                FactRollingInventory.warehouse_id == item.warehouse_id,
+                FactRollingInventory.bucket_date == item.bucket_date
+            ).first()
+            if rec:
+                rec.planned_supply = item.planned_supply
+                rec.updated_at = datetime.now()
+                count += 1
+            else:
+                # Upsert if missing (rare but possible)
+                rec = FactRollingInventory(
+                    sku_id=item.sku_id,
+                    warehouse_id=item.warehouse_id,
+                    bucket_date=item.bucket_date,
+                    planned_supply=item.planned_supply,
+                    updated_at=datetime.now()
+                )
+                db.add(rec)
+                count += 1
+        
+        db.commit()
+        return {"status": "success", "updated": count}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+class RollingOpeningUpdate(BaseModel):
+    sku_id: str
+    warehouse_id: str
+    bucket_date: date
+    opening_stock: float
+
+@router.post("/rolling/update-opening")
+def update_rolling_opening(
+    update: RollingOpeningUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update Opening Stock Manually and Recalculate.
+    """
+    try:
+        # 1. Update DB
+        rec = db.query(FactRollingInventory).filter(
+            FactRollingInventory.sku_id == update.sku_id,
+            FactRollingInventory.warehouse_id == update.warehouse_id,
+            FactRollingInventory.bucket_date == update.bucket_date
+        ).first()
+        
+        if rec:
+            rec.opening_stock = update.opening_stock
+            rec.is_manual_opening = True
+            rec.updated_at = datetime.now()
+        else:
+            rec = FactRollingInventory(
+                sku_id=update.sku_id,
+                warehouse_id=update.warehouse_id,
+                bucket_date=update.bucket_date,
+                opening_stock=update.opening_stock,
+                is_manual_opening=True,
+                status='OK'
+            )
+            db.add(rec)
+        
+        db.commit()
+        
+        # 2. Trigger Re-Calculation for this SKU
+        # This ensures the new opening stock propagates to closing and next months
+        from backend.services.rolling_calc import RollingPlanningEngine
+        engine = RollingPlanningEngine(db)
+        engine.run_rolling_calculation(sku_list=[update.sku_id], horizon_months=12) # Recalc localized
+        
+        return {"status": "success", "message": "Opening stock updated and plan recalculated."}
+        
+    except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 from backend.models import FactPurchasePlans, DimProducts

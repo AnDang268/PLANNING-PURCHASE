@@ -230,7 +230,7 @@ export function StandardDataTable<T extends Record<string, any>>({
                         <div className="flex gap-1 border-r border-border pr-2 mr-1">
                             <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
                                 {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                                Sync
+                                Sync from Misa
                             </Button>
                             {onCancelSync && (
                                 <Button variant="ghost" size="icon" onClick={handleCancelSync} disabled={cancelling} className="text-destructive hover:bg-destructive/10">

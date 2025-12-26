@@ -14,10 +14,13 @@ export default function DataLayout({
 
     const tabs = [
         { name: "Products", href: "/dashboard/data/products" },
+        { name: "Sales Details", href: "/dashboard/data/sales" },
+        { name: "Purchase Details", href: "/dashboard/data/purchases" },
         { name: "Units", href: "/dashboard/data/units" },
         { name: "Product Groups", href: "/dashboard/data/groups" },
         { name: "Warehouses", href: "/dashboard/data/warehouses" },
         { name: "Inventory Snapshots", href: "/dashboard/data/inventory" },
+        { name: "Rolling Data", href: "/dashboard/data/rolling-inventory" },
         { name: "Vendors", href: "/dashboard/data/partners" },
         { name: "Customers", href: "/dashboard/data/customers" },
         { name: "Customer Groups", href: "/dashboard/data/partner-groups" },
