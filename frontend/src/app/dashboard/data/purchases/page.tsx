@@ -2,13 +2,22 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Search, RefreshCw, Upload, FileDown, Calendar } from "lucide-react"
+import { ArrowLeft, Search, RefreshCw, Upload, FileDown, Calendar, Trash2, Edit } from "lucide-react"
 import { StandardDataTable, ColumnDef } from "@/components/StandardDataTable"
 import { API_BASE_URL } from "@/config"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { format, getISOWeek, isValid, parseISO } from "date-fns"
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
 
 interface PurchaseRecord {
     transaction_id: string
@@ -30,6 +39,7 @@ interface ProductGroup {
 export default function PurchasesPage() {
     const router = useRouter()
     const [data, setData] = useState<PurchaseRecord[]>([])
+    const [editingItem, setEditingItem] = useState<PurchaseRecord | null>(null)
     const [loading, setLoading] = useState(true)
     const [totalCount, setTotalCount] = useState(0)
     const [page, setPage] = useState(1)
@@ -163,6 +173,47 @@ export default function PurchasesPage() {
             header: "Extra",
             accessorKey: "extra_data",
             cell: (item) => item.extra_data ? <span title={item.extra_data} className="text-xs text-muted-foreground truncate max-w-[150px] block">{item.extra_data}</span> : '-'
+        },
+        {
+            header: "Actions",
+            accessorKey: "transaction_id",
+            cell: (item) => (
+                <div className="flex items-center gap-1">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-blue-600 hover:text-blue-700"
+                        onClick={() => setEditingItem(item)}
+                    >
+                        <Edit className="h-4 w-4" />
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive/90"
+                        onClick={async () => {
+                            if (!confirm("Are you sure you want to delete this record?")) return;
+                            setLoading(true);
+                            try {
+                                const res = await fetch(`${API_BASE_URL}/api/data/purchases/${item.transaction_id}`, { method: 'DELETE' });
+                                if (res.ok) {
+                                    fetchData();
+                                } else {
+                                    const err = await res.json();
+                                    alert(err.detail || "Failed to delete");
+                                }
+                            } catch (e) {
+                                console.error(e);
+                                alert("Network Error");
+                            } finally {
+                                setLoading(false);
+                            }
+                        }}
+                    >
+                        <Trash2 className="h-4 w-4" />
+                    </Button>
+                </div>
+            )
         }
     ]
 
@@ -174,25 +225,6 @@ export default function PurchasesPage() {
                     <p className="text-muted-foreground">
                         Manage Actual vs Planned Purchases.
                     </p>
-                </div>
-                <div className="flex items-center space-x-2">
-                    <Input
-                        id="purchase-import-file"
-                        type="file"
-                        className="hidden"
-                        accept=".xlsx, .xls, .csv"
-                        onChange={(e) => {
-                            if (e.target.files?.[0]) handleImport(e.target.files[0])
-                        }}
-                    />
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => document.getElementById('purchase-import-file')?.click()}
-                    >
-                        <Upload className="mr-2 h-4 w-4" />
-                        Import
-                    </Button>
                 </div>
             </div>
 
@@ -259,9 +291,89 @@ export default function PurchasesPage() {
                 pageSize={20}
                 onPaginationChange={setPage}
                 onSearchChange={setSearch}
-                onImport={async (f) => { }} // Handle manually above to customize
+                onImport={handleImport}
                 filters={[]}
             />
+
+            {/* Edit Dialog */}
+            <Dialog open={!!editingItem} onOpenChange={(open) => !open && setEditingItem(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Edit Purchase Record</DialogTitle>
+                        <DialogDescription>
+                            Update purchase details for {editingItem?.sku_id}
+                        </DialogDescription>
+                    </DialogHeader>
+                    {editingItem && (
+                        <div className="grid gap-4 py-4">
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="qty" className="text-right">Quantity</Label>
+                                <Input
+                                    id="qty"
+                                    type="number"
+                                    className="col-span-3"
+                                    value={editingItem.quantity}
+                                    onChange={(e) => setEditingItem({ ...editingItem, quantity: parseFloat(e.target.value) })}
+                                />
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="type" className="text-right">Type</Label>
+                                <Select
+                                    value={editingItem.purchase_type}
+                                    onValueChange={(val) => setEditingItem({ ...editingItem, purchase_type: val })}
+                                >
+                                    <SelectTrigger className="col-span-3">
+                                        <SelectValue placeholder="Select type" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="ACTUAL">ACTUAL</SelectItem>
+                                        <SelectItem value="PLANNED">PLANNED</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <Label htmlFor="date" className="text-right">Date</Label>
+                                <Input
+                                    id="date"
+                                    type="date"
+                                    className="col-span-3"
+                                    value={editingItem.order_date ? format(parseISO(editingItem.order_date), 'yyyy-MM-dd') : ''}
+                                    onChange={(e) => setEditingItem({ ...editingItem, order_date: e.target.value })}
+                                />
+                            </div>
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setEditingItem(null)}>Cancel</Button>
+                        <Button onClick={async () => {
+                            if (!editingItem) return;
+                            setLoading(true);
+                            try {
+                                const res = await fetch(`${API_BASE_URL}/api/data/purchases/${editingItem.transaction_id}`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        quantity: editingItem.quantity,
+                                        purchase_type: editingItem.purchase_type,
+                                        order_date: editingItem.order_date
+                                    })
+                                });
+                                if (res.ok) {
+                                    setEditingItem(null);
+                                    fetchData();
+                                } else {
+                                    alert("Failed to update");
+                                }
+                            } catch (e) {
+                                console.error(e);
+                                alert("Network Error");
+                            } finally {
+                                setLoading(false);
+                            }
+                        }}>Save Changes</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

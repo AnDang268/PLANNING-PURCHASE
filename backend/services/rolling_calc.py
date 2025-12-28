@@ -73,7 +73,8 @@ class RollingPlanningEngine:
                 FactSales.order_date <= end_date
             ).all()
             for s in sales:
-                key = (s.sku_id, s.order_date)
+                d = s.order_date.date() if isinstance(s.order_date, datetime) else s.order_date
+                key = (s.sku_id, d)
                 sales_map[key] = sales_map.get(key, 0) + (s.quantity or 0)
 
             # 3. Purchases
@@ -84,7 +85,8 @@ class RollingPlanningEngine:
                 FactPurchases.order_date <= end_date
             ).all()
             for p in purchases:
-                key = (p.sku_id, p.order_date, p.purchase_type)
+                d = p.order_date.date() if isinstance(p.order_date, datetime) else p.order_date
+                key = (p.sku_id, d, p.purchase_type)
                 purchases_map[key] = purchases_map.get(key, 0) + (p.quantity or 0)
 
             # 4. Checkpoints
@@ -95,16 +97,40 @@ class RollingPlanningEngine:
                 FactOpeningStock.stock_date >= start_date
             ).all()
             for c in checkpoints:
-                checkpoint_map[(c.sku_id, c.stock_date)] = c.quantity
+                key = (c.sku_id, c.stock_date)
+                checkpoint_map[key] = checkpoint_map.get(key, 0) + c.quantity
 
             # 5. Existing Rolling (for manual edits preservation)
             print("    Fetching Existing Rolling...")
             existing_rolling = self.db.query(FactRollingInventory).filter(
                 FactRollingInventory.sku_id.in_(chunk),
                 FactRollingInventory.bucket_date >= start_date
+                # Should we filter by Profile/Warehouse here or do we fetch ALL and filter in memory?
+                # Fetching ALL is safer if we want to update the correct generic map.
+                # But wait, prefetch_data signature doesn't have profile/warehouse.
+                # Let's keep it generic here, but the KEY in existing_map needs to include profile/warehouse if we want to be precise.
+                # For now, let's assume this prefetch is used within a context that might need to be specific.
+                # UPDATE: Since run_rolling_calculation is specific, we should probably filter here if we could pass context.
+                # But to avoid breaking signature, let's fetch all and filter in the map key.
             ).all()
             for r in existing_rolling:
-                existing_map[(r.sku_id, r.bucket_date)] = r
+                # Key needs to include Profile/Warehouse now to avoid collision
+                existing_map[(r.sku_id, r.bucket_date, r.profile_id, r.warehouse_id)] = r
+
+            # 7. Purchase Plans (Manual/Fixed Plans) --> [NEW]
+            print("    Fetching Purchase Plans...")
+            plans = self.db.query(FactPurchasePlans).filter(
+                FactPurchasePlans.sku_id.in_(chunk),
+                FactPurchasePlans.plan_date >= start_date,
+                FactPurchasePlans.plan_date <= end_date
+            ).all()
+            for pp in plans:
+                # Use final_quantity if set, else suggested
+                val = pp.final_quantity if pp.final_quantity is not None else pp.suggested_quantity
+                if val > 0:
+                    key = (pp.sku_id, pp.plan_date)
+                    if not hasattr(self, 'purchase_plans_map'): self.purchase_plans_map = {}
+                    self.purchase_plans_map[key] = self.purchase_plans_map.get(key, 0) + val
 
             # 6. Latest Snapshots
             print("    Fetching Snapshots...")
@@ -115,7 +141,8 @@ class RollingPlanningEngine:
                 latest_stock_map[s.sku_id] = s.quantity_on_hand
 
         print("Data prefetch complete.")
-        return forecast_map, sales_map, purchases_map, checkpoint_map, existing_map, latest_stock_map
+        if not hasattr(self, 'purchase_plans_map'): self.purchase_plans_map = {}
+        return forecast_map, sales_map, purchases_map, checkpoint_map, existing_map, latest_stock_map, self.purchase_plans_map
 
     def get_date_range_sum(self, data_map, sku_id, start_date, end_date, p_type=None):
         """Helper to sum values in a date range from a (sku, date) map."""
@@ -132,6 +159,27 @@ class RollingPlanningEngine:
                 total += data_map.get((sku_id, curr), 0)
             curr += timedelta(days=1)
         return total
+
+    def prune_history(self, months_to_keep=6):
+        """
+        Delete Rolling Inventory records older than X months.
+        Keeps table size manageable.
+        """
+        try:
+            cutoff_date = date.today().replace(day=1) - timedelta(days=30 * months_to_keep)
+            print(f"Pruning Rolling Inventory older than {cutoff_date}...")
+            
+            # Efficient Delete
+            # Note: might take time if table is huge. 
+            self.db.query(FactRollingInventory).filter(
+                FactRollingInventory.bucket_date < cutoff_date
+            ).delete(synchronize_session=False)
+            
+            self.db.commit()
+            print("Pruning Complete.")
+        except Exception as e:
+            self.db.rollback()
+            print(f"Pruning Failed: {e}")
 
     def run_sql_procedure(self, horizon_months=12, profile_id='STD', group_id=None, warehouse_id='ALL', run_date=None):
         """
@@ -167,7 +215,7 @@ class RollingPlanningEngine:
         profile = self.db.query(PlanningDistributionProfile).filter_by(profile_id=profile_id).first()
         ratios = [0.25, 0.25, 0.25, 0.25]
         if profile:
-            ratios = [profile.week_1_ratio, profile.week_2_ratio, profile.week_3_ratio, profile.week_4_ratio]
+            ratios = [profile.week1, profile.week2, profile.week3, profile.week4]
 
         # 1b. Fetch Planning Policy
         from backend.models import PlanningPolicies
@@ -188,7 +236,7 @@ class RollingPlanningEngine:
             return
 
         # 3. PREFETCH DATA BULK
-        today = date.today()
+        today = run_date if run_date else date.today()
         current_year = today.year
         current_month = today.month
         start_date = date(current_year, current_month, 1)
@@ -244,7 +292,8 @@ class RollingPlanningEngine:
                         rolling_open = found_snapshot_qty
 
                     # B. MANUAL OVERRIDE (From Existing Record)
-                    existing_rec = existing_map.get((sku_id, bucket_key))
+                    # Key must match the one created in prefetch
+                    existing_rec = existing_map.get((sku_id, bucket_key, profile_id, warehouse_id))
                     if existing_rec and existing_rec.is_manual_opening:
                         if found_snapshot_qty is None:
                             rolling_open = existing_rec.opening_stock
@@ -313,7 +362,9 @@ class RollingPlanningEngine:
                             min_stock_policy=target_stock,
                             net_requirement=net_req if planned > 0 else 0,
                             status='OK',
-                            is_manual_opening=False
+                            is_manual_opening=False,
+                            profile_id=profile_id,
+                            warehouse_id=warehouse_id
                         )
                         self.db.add(rec)
                         # Add to map so next iteration finds it? Not needed for next iteration logic 

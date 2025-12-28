@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Save, Loader2, ArrowLeft } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 
 interface Policy {
@@ -52,6 +52,24 @@ export default function PlanningSettingsPage() {
             console.error(error);
             alert("Failed to update policy");
         } finally {
+            setSavingId(null);
+        }
+    };
+
+    const handleResetData = async () => {
+        if (!confirm("DANGER: Are you sure you want to RESET ALL TRANSACTION DATA?\n\nThis will delete all Sales, Purchases, Inventory, and Plans.\nThis cannot be undone.")) return;
+        if (!confirm("Double Check: Do you really want to proceed? Log records will also be truncated.")) return;
+
+        setSavingId(-1); // Use -1 as indicator for Reset Button Loading
+        setLoading(true);
+        try {
+            await axios.post(`${API_BASE_URL}/api/data/reset-transactions`);
+            alert("System Reset Successfully. All transaction data has been cleared.");
+        } catch (error) {
+            console.error(error);
+            alert("Reset Failed: " + (error as any).response?.data?.detail || "Unknown error");
+        } finally {
+            setLoading(false);
             setSavingId(null);
         }
     };
@@ -131,6 +149,34 @@ export default function PlanningSettingsPage() {
                             </TableBody>
                         </Table>
                     )}
+                </CardContent>
+            </Card>
+
+            <Card className="border-red-200 bg-red-50">
+                <CardHeader>
+                    <CardTitle className="text-red-800 flex items-center gap-2">
+                        <Trash2 className="w-5 h-5" />
+                        System Maintenance (Danger Zone)
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <p className="text-sm text-red-600">
+                        <strong>Warning:</strong> Resetting transaction data will verify delete <strong>ALL</strong> Sales, Purchases, Opening Stock, and Planning history.
+                        <br />
+                        Master Data (Products, Customers, Settings) will be preserved.
+                        <br />
+                        Use this only if you want to start with a fresh slate (e.g., after testing).
+                        <br />
+                        <strong>This action cannot be undone. System Logs will also be truncated.</strong>
+                    </p>
+                    <Button
+                        variant="destructive"
+                        onClick={handleResetData}
+                        disabled={loading}
+                    >
+                        {loading && savingId == -1 ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Reset All Transaction Data
+                    </Button>
                 </CardContent>
             </Card>
         </div>

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Float, DateTime, Boolean, Date, Text, DECIMAL, CHAR, ForeignKey
+from sqlalchemy import Column, String, Integer, Float, DateTime, Boolean, Date, Text, DECIMAL, CHAR, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.mssql import NVARCHAR
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -44,6 +44,7 @@ class DimProducts(Base):
     abc_class = Column(CHAR(1))
     xyz_class = Column(CHAR(1))
     avg_weekly_sales = Column(Float, default=0) # Imported from Excel Col 5
+    is_active = Column(Boolean, default=True) # Added for Planning Optimization
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -101,14 +102,8 @@ class FactSales(Base):
     amount = Column(DECIMAL(18, 2))
     customer_id = Column(NVARCHAR(50))
     is_promotion = Column(Boolean, default=False)
-    is_promotion = Column(Boolean, default=False)
     source = Column(NVARCHAR(20), default='MISA')
-    order_date = Column(DateTime)
-    quantity = Column(Float)
-    amount = Column(DECIMAL(18, 2))
-    customer_id = Column(NVARCHAR(50))
-    is_promotion = Column(Boolean, default=False)
-    source = Column(NVARCHAR(20), default='MISA')
+    warehouse_id = Column(NVARCHAR(255), default='66 An dương vương') # Added per user request
     extra_data = Column(NVARCHAR, nullable=True) # JSON store for unmapped columns
 
 class FactPurchases(Base):
@@ -121,6 +116,7 @@ class FactPurchases(Base):
     order_id = Column(NVARCHAR(50)) # Doc No
     vendor_id = Column(NVARCHAR(50), nullable=True)
     source = Column(NVARCHAR(20), default='IMPORT_FILE')
+    warehouse_id = Column(NVARCHAR(255), default='66 An dương vương') # Added per user request
     extra_data = Column(NVARCHAR, nullable=True) # JSON store
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -226,6 +222,9 @@ class SystemConfig(Base):
 
 class FactRollingInventory(Base):
     __tablename__ = "Fact_Rolling_Inventory"
+    __table_args__ = (
+        UniqueConstraint('sku_id', 'warehouse_id', 'bucket_date', 'profile_id', name='uq_rolling_inventory'),
+    )
     planning_id = Column(Integer, primary_key=True, index=True)
     profile_id = Column(NVARCHAR(50), default='STD', index=True) # Partition Key
     sku_id = Column(NVARCHAR(50), nullable=False, index=True)
@@ -255,3 +254,11 @@ class PlanningDistributionProfile(Base):
     week3 = Column(Float, default=0.25)
     week4 = Column(Float, default=0.25)
     is_active = Column(Boolean, default=True)
+
+class SeasonalFactors(Base):
+    __tablename__ = "Seasonal_Factors"
+    month = Column(Integer, primary_key=True, autoincrement=False) # 1-12
+    demand_multiplier = Column(Float, default=1.0)
+    supplier_delay_days = Column(Integer, default=0)
+    shipping_delay_days = Column(Integer, default=0)
+    description = Column(NVARCHAR(255))

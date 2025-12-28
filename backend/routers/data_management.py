@@ -65,6 +65,48 @@ class ProductUpdate(BaseModel):
 
 # --- Helper Functions ---
 
+def trigger_auto_calculation(db: Session):
+    """
+    Triggers the Rolling Planning SQL Calculation safely.
+    Runs for ALL Active Profiles to ensure consistency.
+    Runs from 3 months ago to ensure recent history is updated.
+    """
+    try:
+        from backend.services.rolling_calc import RollingPlanningEngine
+        from backend.models import PlanningDistributionProfile
+        from datetime import date, timedelta
+        
+        print("[AUTO-CALC] Triggering Rolling Calculation...")
+        
+        # 1. Determine Scope (Active Profiles)
+        profiles = db.query(PlanningDistributionProfile).filter_by(is_active=True).all()
+        if not profiles:
+            profiles = [{'profile_id': 'STD'}] # Fallback
+            
+        engine = RollingPlanningEngine(db)
+        
+        # 1b. Optimize Table (Prune old history)
+        engine.prune_history(months_to_keep=6)
+        
+        # 2. Determine Lookback Date (e.g., Start of previous month or fixed lookback)
+        # To capture recent imports (like Nov 2025 when today is Dec 2025)
+        # Safe bet: 3 months ago or Start of Year.
+        today = date.today()
+        run_date = today.replace(day=1) - timedelta(days=90) # ~3 months back
+        
+        active_ids = [p.profile_id for p in profiles]
+        print(f"[AUTO-CALC] Scope: Profiles={active_ids}, RunDate={run_date}")
+
+        for p in profiles:
+            pid = p.profile_id
+            print(f"[AUTO-CALC] Running for Profile: {pid}...")
+            # Use 'ALL' for warehouse to correspond to global sales/purchases
+            engine.run_sql_procedure(profile_id=pid, warehouse_id='ALL', run_date=run_date)
+            
+        print("[AUTO-CALC] Complete.")
+    except Exception as e:
+        print(f"[AUTO-CALC] Failed: {e}")
+
 def get_recursive_group_ids(db: Session, group_id: str) -> List[str]:
     """
     Recursively fetch all child group IDs for a given group_id.
@@ -611,6 +653,40 @@ def process_opening_stock_file(df: pd.DataFrame, db: Session, import_type: str =
         
         # 4. Process Rows for Batch
         updates = {} # (sku, wh_id, bucket_date) -> qty
+        
+        # --- PARTITION DELETE LOGIC (Avoid Duplicates) ---
+        if import_type == 'full':
+            try:
+                # Identify distinct dates in the file
+                involved_dates = set()
+                
+                # If matrix mode, gathered from columns
+                if is_matrix_mode:
+                    for (_, d_obj) in date_cols:
+                        involved_dates.add(d_obj)
+                
+                # If flat mode and date column exists
+                elif col_date != -1:
+                    # Scan column for dates
+                    raw_dates = pd.Series([row[col_date] for row in valid_rows if len(row) > col_date]).dropna().unique()
+                    for rd in raw_dates:
+                        try:
+                             pd_date = pd.to_datetime(rd, dayfirst=True)
+                             if not pd.isna(pd_date):
+                                 involved_dates.add(date(pd_date.year, pd_date.month, 1))
+                        except: pass
+                
+                if involved_dates:
+                    print(f"[IMPORT] Partition Delete for Dates: {involved_dates}")
+                    # Ensure we delete ALL records (Global + Specific) for these dates to avoid duplicates
+                    db.query(FactOpeningStock).filter(
+                        FactOpeningStock.stock_date.in_(involved_dates)
+                    ).delete(synchronize_session=False)
+                    db.flush()
+            except Exception as e:
+                print(f"[IMPORT WARNING] Partition Delete Failed: {e}")
+        # --- END PARTITION DELETE ---
+        
         errors = []
         
         # Prepare Warehouse Updates/Inserts
@@ -819,6 +895,10 @@ def process_opening_stock_file(df: pd.DataFrame, db: Session, import_type: str =
 
             
         db.commit()
+        # Trigger Auto-Calc if full import (for simplicity, or check arg)
+        if import_type == 'full': # Only for Opening Stock full reset usually
+             trigger_auto_calculation(db)
+        
         return count, errors
     
     except Exception as e:
@@ -1175,16 +1255,26 @@ def process_sales_details_file(df: pd.DataFrame, db: Session):
     # Normalize Header
     df.columns = [str(c).strip() for c in df.columns]
     
-    # Mapping
-    col_date = next((c for c in df.columns if 'ngày' in c.lower() and 'chứng từ' in c.lower()), None)
-    col_tx = next((c for c in df.columns if 'số' in c.lower() and 'chứng từ' in c.lower()), None)
-    col_sku = next((c for c in df.columns if 'mã' in c.lower() and 'hàng' in c.lower()), None)
-    col_qty = next((c for c in df.columns if 'số' in c.lower() and 'lượng' in c.lower()), None)
-    col_amount = next((c for c in df.columns if 'thành' in c.lower() and 'tiền' in c.lower()), None)
-    col_customer = next((c for c in df.columns if 'mã' in c.lower() and 'đối tượng' in c.lower()), None)
+    # Robust Column Detection
+    def find_col(keywords):
+        for c in df.columns:
+            c_lower = c.lower()
+            if any(k == c_lower for k in keywords): return c
+            if any(k in c_lower for k in keywords): return c
+        return None
+
+    col_date = find_col(['ngay', 'date', 'time', 'posting', 'chứng từ'])
+    col_tx = find_col(['số', 'number', 'id', 'trans', 'mã số'])
+    col_sku = find_col(['mã hàng', 'sku', 'item code', 'product', 'mã vt'])
+    col_qty = find_col(['số lượng', 'so_luong', 'quantity', 'qty', 'sl'])
+    col_amount = find_col(['thành tiền', 'amount', 'doanh số', 'total', 'giá trị'])
+    col_customer = find_col(['khách hàng', 'customer', 'đối tượng'])
     
     if not col_sku or not col_qty:
-        return 0, ["Missing crucial columns: 'Mã hàng', 'Số lượng'"]
+         return 0, ["Missing crucial columns: 'Mã hàng' (SKU) or 'Số lượng' (Qty)"]
+         
+    if not col_date:
+         return 0, ["Missing crucial column: 'Date' or 'Ngày'. Import aborted to prevent duplicates."]
 
     # Partition Swap Logic: Delete existing data for date range in file
     try:
@@ -1265,6 +1355,9 @@ def process_sales_details_file(df: pd.DataFrame, db: Session):
         db.rollback()
         raise
         
+    # Trigger Auto-Calc
+    trigger_auto_calculation(db)
+
     return count, errors
 
 from pydantic import BaseModel
@@ -1600,18 +1693,35 @@ def process_purchase_details_file(df: pd.DataFrame, db: Session):
     
     df.columns = [str(c).strip() for c in df.columns]
     
-    col_date = next((c for c in df.columns if 'ngày' in c.lower() and 'chứng từ' in c.lower()), None)
-    col_tx = next((c for c in df.columns if 'số' in c.lower() and 'chứng từ' in c.lower()), None)
-    col_sku = next((c for c in df.columns if ('mã' in c.lower() and 'hàng' in c.lower()) or ('mã' in c.lower() and 'vt' in c.lower()) or 'sku' in c.lower()), None)
+    # Robust Column Detection
+    def find_col(keywords):
+        for c in df.columns:
+            c_lower = c.lower()
+            # Direct match
+            if any(k == c_lower for k in keywords): return c
+            # Partial match specific
+            if any(k in c_lower for k in keywords): return c
+        return None
+
+    col_date = find_col(['ngay', 'date', 'time', 'posting', 'chứng từ', 'doc date', 'receipt date']) 
+    col_tx = find_col(['số', 'number', 'id', 'trans', 'mã số', 'voucher', 'ref', 'so_ct'])
+    col_sku = find_col(['mã hàng', 'sku', 'item code', 'product', 'mã vt', 'material', 'item', 'mã sản phẩm'])
+    col_wh = find_col(['kho', 'warehouse', 'mã kho', 'tên kho', 'site', 'location']) # Added Warehouse detection
     
     # Actual vs Planned columns? 
     # Usually "Số lượng" is actual/stock affecting.
-    # If there is "Số lượng đơn hàng" it might be planned.
-    # For now assume Standard Import is ACTUAL.
-    col_qty = next((c for c in df.columns if 'số' in c.lower() and 'lượng' in c.lower()), None)
+    col_qty = find_col(['số lượng', 'so_luong', 'quantity', 'qty', 'sl', 'thực nhập', 'real qty'])
     
     if not col_sku or not col_qty:
-         return 0, ["Missing crucial columns: 'Mã hàng', 'Số lượng'"]
+         print(f"[PURCHASE IMPORT ERROR] Missing columns. Found: {df.columns.tolist()}")
+         return 0, [f"Missing crucial columns: 'Mã hàng' (SKU) or 'Số lượng' (Qty). Found: {df.columns.tolist()}"]
+         
+    if not col_date:
+         # Fallback to Today if date missing? Or warn?
+         print(f"[PURCHASE IMPORT WARNING] Missing Date column. Found: {df.columns.tolist()}")
+         # return 0, ["Missing crucial column: 'Date' or 'Ngày'. Import aborted to prevent duplicates."]
+         # Lets allow it but warn, using Today
+         pass
          
     # Partition Swap
     try:
@@ -1620,6 +1730,7 @@ def process_purchase_details_file(df: pd.DataFrame, db: Session):
             if not valid_dates.empty:
                 min_date = valid_dates.min().date()
                 max_date = valid_dates.max().date()
+                print(f"[PURCHASE IMPORT] Partition Swap: {min_date} - {max_date}")
                 db.query(FactPurchases).filter(
                     FactPurchases.order_date >= min_date,
                     FactPurchases.order_date <= max_date,
@@ -1629,60 +1740,99 @@ def process_purchase_details_file(df: pd.DataFrame, db: Session):
     except Exception as e:
         print(f"Warning: Partition swap failed: {e}")
         
-    for index, row in df.iterrows():
+    mappings = []
+    
+    # Pre-process columns to avoid repeated lookups
+    c_sku = df.columns.get_loc(col_sku) if col_sku in df.columns else -1
+    c_qty = df.columns.get_loc(col_qty) if col_qty in df.columns else -1
+    c_date = df.columns.get_loc(col_date) if col_date and col_date in df.columns else -1
+    c_tx = df.columns.get_loc(col_tx) if col_tx and col_tx in df.columns else -1
+    
+    # Convert DF to list of dicts for faster iteration
+    records = df.to_dict('records')
+    now = datetime.now()
+
+    for index, row in enumerate(records):
         try:
-            sku = str(row[col_sku]).strip()
-            if not sku or sku.lower() == 'nan': continue
+            # Use column names directly from dictionary
+            sku = str(row.get(col_sku, '')).strip()
+            
+            # 1. Skip Empty
+            if not sku or sku.lower() == 'nan' or sku.lower() == 'none': continue
+            
+            # 2. Skip Repeated Headers (Robustness)
+            # If the SKU field matches "Mã hàng", "SKU", etc., it's likely a header row.
+            if any(k in sku.lower() for k in sku_keys) or (col_sku and sku.lower() == str(col_sku).lower()):
+                print(f"[PURCHASE IMPORT] Skipping generic header row at index {index}: {sku}")
+                continue
             
             qty = 0
-            try: qty = float(row[col_qty])
-            except: pass
+            try: 
+                 val = row.get(col_qty, 0)
+                 if pd.isna(val): val = 0
+                 # Check if Qty is a header-like string before converting?
+                 # If float conversion works, it's likely valid number (or 0). 
+                 # Header "Số lượng" would fail float conversion usually.
+                 qty = float(val)
+            except: 
+                # If qty fails to parse, and SKU looked suspicious, we already skipped.
+                # If SKU was "Product A" but Qty is "Quantity", we skip.
+                if str(val).lower() in [k.lower() for k in qty_keys]:
+                     continue
+                pass
             
-            tx_date = datetime.now()
-            if col_date:
+            tx_date = now
+            if col_date and row.get(col_date):
                 try:
                     d = pd.to_datetime(row[col_date], dayfirst=True)
                     if not pd.isna(d): tx_date = d
                 except: pass
                 
             tx_id = f"IMP-PUR-{index}"
-            if col_tx:
+            if col_tx and row.get(col_tx):
                 val = str(row[col_tx]).strip()
-                if val and val.lower() != 'nan': tx_id = val
-            
-            # Extra
-            unmapped = [c for c in df.columns if c not in [col_date, col_tx, col_sku, col_qty]]
-            extra = {}
-            for c in unmapped:
-                val = row[c]
-                if not pd.isna(val): extra[c] = str(val)
-            extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
+                if val and val.lower() != 'nan' and val.lower() != 'none': tx_id = val
             
             final_id = f"{tx_id}_{sku}_{index}"
             
-            new_pur = FactPurchases(
-                transaction_id=final_id,
-                sku_id=sku,
-                order_date=tx_date,
-                quantity=qty,
-                purchase_type='ACTUAL', # Default to Actual for historical import
-                order_id=tx_id,
-                source='IMPORT_FILE',
-                extra_data=extra_json
-            )
-            db.add(new_pur)
-            count += 1
-            if count % 100 == 0: db.flush()
+            # Warehouse Logic
+            wh_val = '66 An dương vương'
+            if col_wh and row.get(col_wh):
+                val = str(row[col_wh]).strip()
+                if val and val.lower() != 'nan' and val.lower() != 'none':
+                    wh_val = val
+
+            mappings.append({
+                "transaction_id": final_id,
+                "sku_id": sku,
+                "order_date": tx_date,
+                "quantity": qty,
+                "purchase_type": 'ACTUAL',
+                "order_id": tx_id,
+                "source": 'IMPORT_FILE',
+                "warehouse_id": wh_val,
+                "extra_data": None 
+            })
             
         except Exception as e:
-             errors.append(f"Row {index}: {str(e)}")
-             
-    try:
-        db.commit()
-    except:
-        db.rollback()
-        raise
-        
+            errors.append(f"Row {index}: {str(e)}")
+
+    if mappings:
+        print(f"[PURCHASE IMPORT] Bulk Inserting {len(mappings)} records...")
+        try:
+            db.bulk_insert_mappings(FactPurchases, mappings)
+            db.commit() # Commit explicitly
+            count = len(mappings)
+        except Exception as e:
+            db.rollback()
+            print(f"[PURCHASE IMPORT ERROR] Bulk Insert Failed: {e}")
+            errors.append(f"Bulk Insert Failed: {str(e)}")
+            # Fallback to slow insert?
+            return 0, errors
+
+    # Trigger Auto-Calc
+    trigger_auto_calculation(db)
+
     return count, errors
 
 @router.post("/import/upload")
@@ -2344,3 +2494,46 @@ def save_crm_config(config: Dict[str, Any], db: Session = Depends(get_db)):
     except Exception as e:
          db.rollback()
          raise HTTPException(500, str(e))
+
+@router.post("/reset-transactions")
+def reset_transaction_data(db: Session = Depends(get_db)):
+    """
+    DANGER: Clears all transaction data tables.
+    Preserves Master Data (Products, Customers, Warehouses, Settings).
+    """
+    from sqlalchemy import text
+    try:
+        # Tables to clear (Order matters if FKs exist, but mostly Facts are leaves)
+        tables = [
+            "Fact_Rolling_Inventory",
+            "Fact_Purchase_Plans",
+            "Fact_Opening_Stock",
+            "Fact_Inventory_Snapshots",
+            "Fact_Sales",
+            "Fact_Purchases",
+            "Fact_Forecasts",
+            "System_Sync_Logs" 
+        ]
+        
+        # Use DELETE for safety (FKs), but TRUNCATE is better for logs.
+        # Given user request "truncate log", we should ideally TRUNCATE.
+        # But SQL Server TRUNCATE requires no FKs.
+        # We will try DELETE. 
+        # To minimize log bloat, we could set Recovery Simple, but can't do that here.
+        
+        print("[RESET] Starting Transaction Reset...")
+        for t in tables:
+            # Check if exists
+            try:
+                # db.execute(text(f"TRUNCATE TABLE {t}")) # Ideally
+                db.execute(text(f"DELETE FROM {t}"))
+            except Exception as e:
+                print(f"[RESET WARNING] Failed to clear {t}: {e}")
+                # Try fallback or ignore if table doesn't exist
+                pass
+                
+        db.commit()
+        return {"message": "Transaction Data Reset Successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

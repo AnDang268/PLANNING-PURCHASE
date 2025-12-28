@@ -1,0 +1,18 @@
+HEADER FOUND at Row 3:
+  SKU Index: 2 ('item_code')
+  Qty Index: 5 ('opening_quantity')
+  QtyUpdate Index: -1 ('N/A')
+  Unit Index: 4 ('unit')
+  WhCode Index: 0
+  fallback_used: False
+  Full Row: ['warehouse_id', 'warehouse_name', 'item_code', 'item_name', 'unit', 'opening_quantity', 'opening_value', 'quantity_in', 'value_in', 'quantity_out', 'value_out', 'closing_quantity', 'closing_value']
+Row 0: SKU=AokhottaydaiL Qty(Col 5)='14' -> 14.0. Unit=''
+Row 1: SKU=AokhottaydaiM Qty(Col 5)='4' -> 4.0. Unit=''
+Row 2: SKU=AokhottaydaiXL Qty(Col 5)='18' -> 18.0. Unit=''
+Row 3: SKU=AokhottaynganL Qty(Col 5)='7' -> 7.0. Unit=''
+Row 4: SKU=AokhottaynganM Qty(Col 5)='2' -> 2.0. Unit=''
+Row 5: SKU=AokhottaynganXL Qty(Col 5)='1' -> 1.0. Unit=''
+Row 6: SKU=AoMua.RP7.KM Qty(Col 5)='38' -> 38.0. Unit='Cái'
+Row 7: SKU=AoThun.KYO.KM Qty(Col 5)='1' -> 1.0. Unit=''
+Row 8: SKU=AoThunL.KYO.KM Qty(Col 5)='6' -> 6.0. Unit=''
+Row 9: SKU=AOTHUN.POLO.3XL.DPK Qty(Col 5)='23' -> 23.0. Unit='Cái'

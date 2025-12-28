@@ -21,6 +21,18 @@ class RunCalcRequest(BaseModel):
     warehouse_id: Optional[str] = 'ALL'
     run_date: Optional[date] = None
 
+@router.get("/products/search")
+def search_products(q: str, limit: int = 20, db: Session = Depends(get_db)):
+    """
+    Simple search for Product Picker.
+    """
+    from backend.models import DimProducts
+    term = f"%{q}%"
+    results = db.query(DimProducts.sku_id, DimProducts.product_name)\
+        .filter((DimProducts.sku_id.ilike(term)) | (DimProducts.product_name.ilike(term)))\
+        .limit(limit).all()
+    return [{"sku_id": r.sku_id, "product_name": r.product_name} for r in results]
+
 @router.get("/profiles")
 def get_planning_profiles(db: Session = Depends(get_db)):
     return db.query(PlanningDistributionProfile).filter_by(is_active=True).all()
@@ -72,6 +84,8 @@ def get_rolling_matrix(
     warehouse_id: Optional[str] = None,
     profile_id: str = 'STD',
     group_id: Optional[str] = None,
+    search: Optional[str] = None,
+    sku_ids: Optional[str] = None, # New: Comma separated list
     db: Session = Depends(get_db)
 ):
     # 1. Base Query for SKUs (Distinct)
@@ -84,6 +98,21 @@ def get_rolling_matrix(
         # Recursive Filter
         target_groups = get_recursive_group_ids(db, group_id)
         sku_query = sku_query.filter((DimProducts.group_id.in_(target_groups)) | (DimProducts.category.in_(target_groups)))
+
+    if sku_ids:
+        # Filter by specific list of SKUs
+        id_list = [x.strip() for x in sku_ids.split(',') if x.strip()]
+        if id_list:
+            sku_query = sku_query.filter(DimProducts.sku_id.in_(id_list))
+
+    if search:
+        search_term = f"%{search}%"
+        # Optional: Join Group to search by group name too?
+        # For now keep it simple to SKU/Name to rely on the MultiSelect for precision
+        sku_query = sku_query.filter(
+            (DimProducts.sku_id.ilike(search_term)) | 
+            (DimProducts.product_name.ilike(search_term))
+        )
 
     # Total Count
     total_items = sku_query.distinct().count()

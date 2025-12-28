@@ -1,0 +1,16 @@
+Checking SKU: GD.UCP206.WIN
+Found Product: WIN UCP 206
+Group ID: bd09aafc-bb71-4338-8f21-a1fbb5742ecd
+Group Name: Gối đỡ WIN
+
+--- All Groups for GD.* ---
+ID: 28344648-871a-4bbf-970b-a06e941b3394 | Name: Gối đỡ KYO
+ID: 2c0581c7-ca6c-4cf5-82ef-1edf1bcb12e8 | Name: Hàng mẫu
+ID: a5d5b3ef-6adf-4256-bbbe-5f42ba957b78 | Name: Vòng bi SKF
+ID: a5fefba4-ef38-4458-8783-47a6f7e41cb6 | Name: Vòng bi mua ngoài
+ID: a6634b38-8906-4351-a0cb-bff80b64d7a7 | Name: Mỡ bò, Zenshin, Mcwayne, TRK, NZSX,…
+ID: a847b571-dee4-4596-bb62-07e41c6af2e3 | Name: Gối đỡ ASAHI
+ID: b3bfbe6c-4659-47d5-9b91-89d85c0ffaaf | Name: Gối đỡ Minh Châu
+ID: b5366aec-b233-469e-ac37-6642ec8b5239 | Name: Vòng bi NACHI
+ID: bd09aafc-bb71-4338-8f21-a1fbb5742ecd | Name: Gối đỡ WIN
+ID: da3ef450-9cec-4483-a93a-82f67070c211 | Name: Mã Mới

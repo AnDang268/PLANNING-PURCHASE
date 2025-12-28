@@ -8,6 +8,30 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { API_BASE_URL } from "@/config";
+import { ChevronsUpDown, Maximize2, Minimize2, ChevronLeft, ChevronRight, ChevronDown, Check, Search, Upload, FileDown, Columns } from "lucide-react";
+import { ProductMultiSelect } from "@/components/ProductMultiSelect";
+import {
+    DropdownMenu,
+    DropdownMenuCheckboxItem,
+    DropdownMenuContent,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+} from "@/components/ui/command";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import {
     Table,
     TableBody,
@@ -23,7 +47,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { Download, Upload, Play, Save, Loader2, ChevronDown, ChevronRight, Settings, Maximize2, Minimize2, Columns, Check, FileDown } from 'lucide-react';
+import { Download, Upload, Play, Save, Loader2, ChevronDown, ChevronRight, Settings, Maximize2, Minimize2, Columns, Check, FileDown, Search, ChevronLeft } from 'lucide-react';
 import { format, parseISO, startOfMonth, endOfMonth, isSameMonth } from "date-fns";
 import * as XLSX from 'xlsx';
 import { Combobox } from "@/components/ui/combobox";
@@ -42,6 +66,7 @@ import {
     CommandInput,
     CommandItem,
 } from "@/components/ui/command";
+import { useToast } from "@/components/ui/use-toast";
 import {
     Popover,
     PopoverContent,
@@ -132,6 +157,16 @@ export default function RollingPlanningPage() {
     // UI State
     const [isFullScreen, setIsFullScreen] = useState(false);
 
+    // Group Expansion State
+    const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+    const toggleGroup = (e: React.MouseEvent, groupId: string) => {
+        e.stopPropagation();
+        const newSet = new Set(expandedGroups);
+        if (newSet.has(groupId)) newSet.delete(groupId);
+        else newSet.add(groupId);
+        setExpandedGroups(newSet);
+    };
+
     // --- Initialization ---
     useEffect(() => {
         fetchData();
@@ -212,7 +247,9 @@ export default function RollingPlanningPage() {
             // New endpoint we just added
             const res = await axios.get(`${API_BASE_URL}/api/planning/rolling/warehouses`);
             if (Array.isArray(res.data)) {
-                setWarehouses(res.data);
+                // Deduplicate by warehouse_id
+                const uniqueWh = Array.from(new Map(res.data.map((w: any) => [w.warehouse_id, w])).values());
+                setWarehouses(uniqueWh as any[]);
             }
         } catch (e) {
             console.error("Failed to fetch warehouses", e);
@@ -270,6 +307,8 @@ export default function RollingPlanningPage() {
     const [fromDate, setFromDate] = useState<Date | undefined>(startOfMonth);
     const [toDate, setToDate] = useState<Date | undefined>(endOfYear);
 
+    const [searchTerm, setSearchTerm] = useState("");
+
     const fetchData = async () => {
         setLoading(true);
         try {
@@ -278,6 +317,9 @@ export default function RollingPlanningPage() {
             if (selectedGroup && selectedGroup !== 'ALL') url += `&group_id=${selectedGroup}`;
             if (selectedWarehouse && selectedWarehouse !== 'ALL') url += `&warehouse_id=${selectedWarehouse}`;
             if (selectedProfile) url += `&profile_id=${selectedProfile}`;
+            if (searchTerm) url += `&search=${encodeURIComponent(searchTerm)}`;
+
+            console.log("Fetching Rolling Data:", url);
 
             console.log("Fetching Rolling Data:", url);
             const res = await axios.get(url);
@@ -523,6 +565,10 @@ export default function RollingPlanningPage() {
         XLSX.writeFile(wb, fname);
     };
 
+    const { toast } = useToast();
+
+    // ...
+
     const handleImportOpenStock = async (file: File) => {
         setLoading(true);
         try {
@@ -532,12 +578,12 @@ export default function RollingPlanningPage() {
                 headers: { "Content-Type": "multipart/form-data" }
             });
             if (res.status === 200) {
-                alert(res.data.message);
+                toast({ title: "Import Success", description: res.data.message });
                 fetchData();
             }
         } catch (e: any) {
             console.error(e);
-            alert(e.response?.data?.detail || "Import Failed");
+            toast({ title: "Import Failed", description: e.response?.data?.detail || "Unknown Error", variant: "destructive" });
         } finally {
             setLoading(false);
         }
@@ -557,16 +603,16 @@ export default function RollingPlanningPage() {
             });
 
             if (res.data.status === "success") {
-                alert(res.data.message);
+                toast({ title: "Import Success", description: res.data.message });
                 if (res.data.errors && res.data.errors.length > 0) {
                     console.warn("Import Warnings:", res.data.errors);
-                    alert("Imported with warnings. Check console.");
+                    toast({ title: "Import Warnings", description: "Imported with warnings. Check console.", variant: "warning" });
                 }
                 fetchData();
             }
         } catch (e: any) {
             console.error(e);
-            alert(e.response?.data?.detail || "Import Failed");
+            toast({ title: "Import Failed", description: e.response?.data?.detail || e.message, variant: "destructive" });
         } finally {
             setLoading(false);
         }
@@ -668,27 +714,70 @@ export default function RollingPlanningPage() {
                                             All Groups
                                         </CommandItem>
 
-                                        {groups.map((group) => (
-                                            <CommandItem
-                                                key={group.id}
-                                                value={group.name} // Search by name
-                                                onSelect={() => {
-                                                    setSelectedGroup(group.id === selectedGroup ? "ALL" : group.id)
-                                                    setOpenGroupParam(false)
-                                                }}
-                                            >
-                                                <Check
-                                                    className={cn(
-                                                        "mr-2 h-4 w-4",
-                                                        selectedGroup === group.id ? "opacity-100" : "opacity-0"
-                                                    )}
-                                                />
-                                                <div style={{ paddingLeft: `${(group.level || 0) * 16}px` }} className="flex items-center">
-                                                    {(group.level || 0) > 0 && <span className="text-gray-300 mr-1">└</span>}
-                                                    {group.name}
-                                                </div>
-                                            </CommandItem>
-                                        ))}
+                                        {groups.map((group) => {
+                                            // Visibility Check
+                                            let isVisible = true;
+                                            if (group.level > 0) {
+                                                if (group.parent && group.parent !== 'Main' && !expandedGroups.has(group.parent)) {
+                                                    isVisible = false;
+                                                }
+                                                // Simple check for now.
+                                            }
+
+                                            // FIX: We need a reliable ancestry check.
+                                            // Let's assume groups are small enough (<200) to just find parent.
+                                            let curr = group;
+                                            while (curr && curr.level > 0 && isVisible) {
+                                                if (curr.parent && curr.parent !== 'Main') {
+                                                    if (!expandedGroups.has(curr.parent)) {
+                                                        isVisible = false;
+                                                        break;
+                                                    }
+                                                    // Find parent object
+                                                    curr = groups.find(g => g.id === curr.parent) || (null as any);
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+
+                                            if (!isVisible) return null;
+
+                                            const hasChildren = groups.some(g => g.parent === group.id);
+
+                                            return (
+                                                <CommandItem
+                                                    key={group.id}
+                                                    value={group.name} // Search by name
+                                                    onSelect={() => {
+                                                        setSelectedGroup(group.id === selectedGroup ? "ALL" : group.id)
+                                                        setOpenGroupParam(false)
+                                                    }}
+                                                >
+                                                    <div className="flex items-center w-full">
+                                                        <div style={{ width: `${(group.level || 0) * 16}px` }} className="shrink-0" />
+
+                                                        {hasChildren ? (
+                                                            <div
+                                                                className="h-4 w-4 mr-1 shrink-0 cursor-pointer hover:bg-muted rounded flex items-center justify-center"
+                                                                onClick={(e) => toggleGroup(e, group.id)}
+                                                            >
+                                                                {expandedGroups.has(group.id) ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                                            </div>
+                                                        ) : (
+                                                            <div className="w-5 shrink-0" />
+                                                        )}
+
+                                                        <Check
+                                                            className={cn(
+                                                                "mr-2 h-4 w-4 shrink-0",
+                                                                selectedGroup === group.id ? "opacity-100" : "opacity-0"
+                                                            )}
+                                                        />
+                                                        <span className="truncate">{group.name}</span>
+                                                    </div>
+                                                </CommandItem>
+                                            );
+                                        })}
                                     </CommandGroup>
                                 </Command>
                             </PopoverContent>
@@ -706,6 +795,20 @@ export default function RollingPlanningPage() {
                                     ))}
                                 </SelectContent>
                             </Select>
+                        </div>
+
+                        {/* SKU Search */}
+                        <div className="relative">
+                            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                            <input
+                                placeholder="Search SKU/Product..."
+                                className="pl-8 h-10 w-[200px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') fetchData();
+                                }}
+                            />
                         </div>
 
                         <div className="flex items-center space-x-2">
@@ -811,15 +914,167 @@ export default function RollingPlanningPage() {
                 }}
             />
 
-            <Card className={`overflow-hidden transition-all duration-300 ${isFullScreen ? 'fixed inset-0 z-[100] h-screen w-screen flex flex-col rounded-none m-0' : ''}`}>
-                <CardHeader className="bg-muted/50 pb-4 flex flex-row justify-between items-center">
-                    <div>
-                        <CardTitle>Supply Matrix Worksheet</CardTitle>
-                        <CardDescription>Review projected inventory and adjust planned orders.</CardDescription>
+            {/* Legend */}
+            <div className="flex gap-4 text-xs text-muted-foreground bg-muted/20 p-2 rounded items-center">
+                <div className="font-semibold">Legend:</div>
+                <div className="flex items-center gap-1"><div className="w-2 h-2 bg-gray-500 rounded-full" /> <span className="font-medium">Fcst:</span> Forecast Demand</div>
+                <div className="flex items-center gap-1"><div className="w-2 h-2 bg-gray-400 rounded-full" /> <span className="font-medium">Open:</span> Opening Stock</div>
+                <div className="flex items-center gap-1"><div className="w-2 h-2 bg-blue-500 rounded-full" /> <span className="font-medium">In:</span> Incoming Supply (PO)</div>
+                <div className="flex items-center gap-1"><div className="w-2 h-2 bg-yellow-600 rounded-full" /> <span className="font-medium">Plan:</span> Planned Supply (System/User)</div>
+                <div className="flex items-center gap-1"><div className="w-2 h-2 bg-gray-800 rounded-full" /> <span className="font-medium">Close:</span> Closing Stock</div>
+            </div>
+
+            <Card className={cn(
+                "flex flex-col transition-all duration-300",
+                isFullScreen ? "fixed inset-0 z-[100] h-screen w-screen rounded-none m-0 border-0" : "overflow-hidden"
+            )}>
+                <CardHeader className="bg-muted/50 pb-4 flex flex-col gap-4">
+                    {/* Header Row: Title + Top Controls */}
+                    <div className="flex flex-row justify-between items-center">
+                        <div>
+                            <CardTitle>Supply Matrix Worksheet</CardTitle>
+                            <CardDescription>Review projected inventory and adjust planned orders.</CardDescription>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            {/* Pagination */}
+                            <span className="text-sm text-gray-500">
+                                Page {page} of {Math.ceil(totalItems / pageSize)} ({totalItems} items)
+                            </span>
+                            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
+                                <ChevronLeft className="h-4 w-4" />
+                            </Button>
+                            <Button variant="outline" size="sm" disabled={page >= Math.ceil(totalItems / pageSize)} onClick={() => setPage(p => p + 1)}>
+                                <ChevronRight className="h-4 w-4" />
+                            </Button>
+
+                            {isFullScreen && (
+                                <Button variant="outline" size="sm" onClick={() => setIsFullScreen(false)}>
+                                    <Minimize2 className="mr-2 h-4 w-4" /> Close
+                                </Button>
+                            )}
+                            {!isFullScreen && (
+                                <Button variant="ghost" size="sm" onClick={() => setIsFullScreen(true)}>
+                                    <Maximize2 className="h-4 w-4" />
+                                </Button>
+                            )}
+                        </div>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={() => setIsFullScreen(!isFullScreen)}>
-                        {isFullScreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
-                    </Button>
+
+                    {/* Filter Bar (Visible in Full Screen too) */}
+                    <div className="flex flex-wrap items-center gap-2 bg-background p-2 rounded border">
+                        {/* Group Filter */}
+                        <Popover open={openGroupParam} onOpenChange={setOpenGroupParam}>
+                            <PopoverTrigger asChild>
+                                <Button variant="outline" role="combobox" aria-expanded={openGroupParam} className="w-[180px] justify-between h-9 text-xs">
+                                    {selectedGroup === "ALL" ? "All Groups" : groups.find(g => g.id === selectedGroup)?.name || "Select Group"}
+                                    <ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[300px] p-0" align="start">
+                                <Command>
+                                    <CommandInput placeholder="Search Group..." />
+                                    <CommandEmpty>No group found.</CommandEmpty>
+                                    <CommandGroup className="max-h-[300px] overflow-y-auto">
+                                        <CommandItem value="ALL" onSelect={() => { setSelectedGroup("ALL"); setOpenGroupParam(false) }}>
+                                            <Check className={cn("mr-2 h-4 w-4", selectedGroup === "ALL" ? "opacity-100" : "opacity-0")} />
+                                            All Groups
+                                        </CommandItem>
+                                        {flattenGroupTree(buildGroupTree(groups)).map((group) => {
+                                            let isVisible = true;
+                                            let curr = group;
+                                            while (curr && curr.level > 0 && isVisible) {
+                                                if (curr.parent && curr.parent !== 'Main' && !expandedGroups.has(curr.parent)) {
+                                                    isVisible = false; break;
+                                                }
+                                                curr = groups.find(g => g.id === curr.parent) || (null as any);
+                                            }
+                                            if (!isVisible) return null;
+                                            const hasChildren = groups.some(g => g.parent === group.id);
+
+                                            return (
+                                                <CommandItem key={group.id} value={group.name} onSelect={() => { setSelectedGroup(group.id === selectedGroup ? "ALL" : group.id); setOpenGroupParam(false) }}>
+                                                    <div className="flex items-center w-full">
+                                                        <div style={{ width: `${(group.level || 0) * 16}px` }} className="shrink-0" />
+                                                        {hasChildren ? (
+                                                            <div className="h-4 w-4 mr-1 shrink-0 cursor-pointer hover:bg-muted rounded flex items-center justify-center" onClick={(e) => toggleGroup(e, group.id)}>
+                                                                {expandedGroups.has(group.id) ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                                            </div>
+                                                        ) : <div className="w-5 shrink-0" />}
+                                                        <Check className={cn("mr-2 h-4 w-4 shrink-0", selectedGroup === group.id ? "opacity-100" : "opacity-0")} />
+                                                        <span className="truncate">{group.name}</span>
+                                                    </div>
+                                                </CommandItem>
+                                            );
+                                        })}
+                                    </CommandGroup>
+                                </Command>
+                            </PopoverContent>
+                        </Popover>
+
+                        {/* Product Multi Select */}
+                        <div className="w-[250px]">
+                            <ProductMultiSelect value={selectedSkuList} onChange={setSelectedSkuList} />
+                        </div>
+
+                        {/* Warehouse Filter */}
+                        <div className="w-[150px]">
+                            <Select value={selectedWarehouse} onValueChange={setSelectedWarehouse}>
+                                <SelectTrigger className="h-9 text-xs">
+                                    <SelectValue placeholder="All Warehouses" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="ALL">All Warehouses</SelectItem>
+                                    {warehouses.map((w: any) => (
+                                        <SelectItem key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_name}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {/* Text Search */}
+                        <div className="relative">
+                            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                            <input
+                                placeholder="Search SKU/Name..."
+                                className="pl-8 h-9 w-[150px] rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') fetchData(); }}
+                            />
+                        </div>
+
+
+                        <Button size="sm" onClick={fetchData}>Apply</Button>
+
+                        <div className="flex-1" />
+
+                        {/* Tools */}
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="outline" size="sm" className="h-9"><Columns className="mr-2 h-3.5 w-3.5" /> Cols</Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-[150px] max-h-[300px] overflow-y-auto">
+                                <DropdownMenuLabel>Toggle Months</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                {uniqueMonths.map(m => (
+                                    <DropdownMenuCheckboxItem key={m} checked={visibleMonths.has(m)} onCheckedChange={(checked) => {
+                                        const next = new Set(visibleMonths);
+                                        if (checked) next.add(m); else next.delete(m);
+                                        setVisibleMonths(next);
+                                    }}>{m}</DropdownMenuCheckboxItem>
+                                ))}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+
+                        <Button size="sm" variant="outline" className="h-9 gap-1" onClick={handleExportExcel}>
+                            <FileDown className="h-3.5 w-3.5" /> Export
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-9 gap-1" onClick={() => document.getElementById('import-matrix')?.click()}>
+                            <Upload className="h-3.5 w-3.5" /> Import Plan
+                        </Button>
+                    </div>
+
                 </CardHeader>
                 <div className="overflow-x-auto flex-1">
                     <Table className="border-collapse h-full">
@@ -865,20 +1120,20 @@ export default function RollingPlanningPage() {
                                     const isCollapsed = collapsedMonths.has(m);
                                     if (isCollapsed) {
                                         return [
-                                            <TableHead key={`${m}-fc`} className="w-[80px] text-xs text-center border-r font-normal text-gray-500">Fcst</TableHead>,
-                                            <TableHead key={`${m}-op`} className="w-[80px] text-xs text-center border-r font-normal text-gray-400">Open</TableHead>,
-                                            <TableHead key={`${m}-in`} className="w-[80px] text-xs text-center border-r font-normal text-blue-500">In</TableHead>,
-                                            <TableHead key={`${m}-pl`} className="w-[80px] text-xs text-center border-r font-bold text-yellow-600">Plan</TableHead>,
-                                            <TableHead key={`${m}-cl`} className="w-[80px] text-xs text-center border-r font-bold text-gray-800">Close</TableHead>
+                                            <TableHead key={`${m}-fc`} className="w-[80px] text-xs text-center border-r font-normal text-gray-500" title="Forecast Demand">Fcst</TableHead>,
+                                            <TableHead key={`${m}-op`} className="w-[80px] text-xs text-center border-r font-normal text-gray-400" title="Opening Stock">Open</TableHead>,
+                                            <TableHead key={`${m}-in`} className="w-[80px] text-xs text-center border-r font-normal text-blue-500" title="Incoming Supply (PO)">In</TableHead>,
+                                            <TableHead key={`${m}-pl`} className="w-[80px] text-xs text-center border-r font-bold text-yellow-600" title="Planned Supply (Order)">Plan</TableHead>,
+                                            <TableHead key={`${m}-cl`} className="w-[80px] text-xs text-center border-r font-bold text-gray-800" title="Closing Stock">Close</TableHead>
                                         ];
                                     }
                                     const mWeeks = uniqueDates.filter(d => d.startsWith(m));
                                     return mWeeks.flatMap(d => [
-                                        <TableHead key={`${d}-fc`} className="w-[60px] text-[10px] text-center border-l font-normal text-gray-500 p-1">Fcst</TableHead>,
-                                        <TableHead key={`${d}-op`} className="w-[60px] text-[10px] text-center border-l font-normal text-gray-400 p-1">Open</TableHead>,
-                                        <TableHead key={`${d}-in`} className="w-[60px] text-[10px] text-center border-l font-normal text-blue-500 p-1">In</TableHead>,
-                                        <TableHead key={`${d}-pl`} className="w-[60px] text-[10px] text-center border-l font-bold text-yellow-600 p-1 bg-yellow-50/50">Plan</TableHead>,
-                                        <TableHead key={`${d}-cl`} className="w-[60px] text-[10px] text-center border-r font-bold text-gray-800 p-1">Close</TableHead>
+                                        <TableHead key={`${d}-fc`} className="w-[60px] text-[10px] text-center border-l font-normal text-gray-500 p-1" title="Forecast">Fcst</TableHead>,
+                                        <TableHead key={`${d}-op`} className="w-[60px] text-[10px] text-center border-l font-normal text-gray-400 p-1" title="Opening">Open</TableHead>,
+                                        <TableHead key={`${d}-in`} className="w-[60px] text-[10px] text-center border-l font-normal text-blue-500 p-1" title="Incoming">In</TableHead>,
+                                        <TableHead key={`${d}-pl`} className="w-[60px] text-[10px] text-center border-l font-bold text-yellow-600 p-1 bg-yellow-50/50" title="Plan">Plan</TableHead>,
+                                        <TableHead key={`${d}-cl`} className="w-[60px] text-[10px] text-center border-r font-bold text-gray-800 p-1" title="Close">Close</TableHead>
                                     ]);
                                 })}
                             </TableRow>
@@ -891,7 +1146,7 @@ export default function RollingPlanningPage() {
                                     </TableCell>
                                 </TableRow>
                             ) : (data
-                                .filter(row => selectedGroup === "ALL" || row.category === selectedGroup || row.group_name === selectedGroup)
+                                .filter(row => selectedGroup === "ALL" || row.category === selectedGroup || row.group_name === selectedGroup) // Client-side filter might be redundant with Search but safe to keep
                                 .map(row => {
                                     return (
                                         <TableRow key={row.sku_id} className="hover:bg-muted/30 odd:bg-white even:bg-gray-50/30">

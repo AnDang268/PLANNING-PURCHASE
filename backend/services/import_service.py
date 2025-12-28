@@ -89,7 +89,8 @@ class ImportService:
                     sku_id=str(row['SKU_ID']),
                     quantity=row['QUANTITY'],
                     order_date=pd.to_datetime(row['ORDER_DATE']),
-                    source='EXCEL'
+                    source='EXCEL',
+                    warehouse_id=row.get('WAREHOUSE', '66 An dương vương') # Default per user request
                 )
                 self.db.add(new_item)
 
