@@ -16,4 +16,4 @@ timeout /t 5
 :: 3. Start Frontend (Production Mode)
 echo "Starting Frontend..."
 cd /d "%PROJECT_ROOT%frontend"
-cmd /k "npm start"
+cmd /k "npm run dev"

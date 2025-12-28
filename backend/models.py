@@ -43,6 +43,7 @@ class DimProducts(Base):
     distribution_profile_id = Column(NVARCHAR(50), ForeignKey('Planning_Distribution_Profiles.profile_id'), nullable=True) # New: Link to Demand Profile (e.g., B2B, B2C)
     abc_class = Column(CHAR(1))
     xyz_class = Column(CHAR(1))
+    avg_weekly_sales = Column(Float, default=0) # Imported from Excel Col 5
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -108,7 +109,7 @@ class FactSales(Base):
     customer_id = Column(NVARCHAR(50))
     is_promotion = Column(Boolean, default=False)
     source = Column(NVARCHAR(20), default='MISA')
-    extra_data = Column(Text, nullable=True) # JSON store for unmapped columns
+    extra_data = Column(NVARCHAR, nullable=True) # JSON store for unmapped columns
 
 class FactPurchases(Base):
     __tablename__ = "Fact_Purchases"
@@ -120,7 +121,7 @@ class FactPurchases(Base):
     order_id = Column(NVARCHAR(50)) # Doc No
     vendor_id = Column(NVARCHAR(50), nullable=True)
     source = Column(NVARCHAR(20), default='IMPORT_FILE')
-    extra_data = Column(Text, nullable=True) # JSON store
+    extra_data = Column(NVARCHAR, nullable=True) # JSON store
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class FactInventorySnapshots(Base):
@@ -132,6 +133,23 @@ class FactInventorySnapshots(Base):
     quantity_on_order = Column(Float, default=0)
     quantity_allocated = Column(Float, default=0)
     unit = Column(NVARCHAR(50))
+    notes = Column(NVARCHAR(255))
+
+class FactOpeningStock(Base):
+    """
+    Dedicated table for Planning Opening Stock Inputs.
+    Populated by Manual Import or Edit.
+    Acts as the 'Checkpoint' for Rolling Forecast.
+    """
+    __tablename__ = "Fact_Opening_Stock"
+    stock_date = Column(Date, primary_key=True) # The Cycle/Checkpoint Date
+    warehouse_id = Column(NVARCHAR(50), primary_key=True, default='ALL')
+    sku_id = Column(NVARCHAR(50), primary_key=True)
+    quantity = Column(Float, nullable=False)
+    quantity_update = Column(Float, nullable=True) # Override value from user
+    unit = Column(NVARCHAR(50)) # Added 2024-12-27
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     notes = Column(NVARCHAR(255))
 
 class FactPurchasePlans(Base):
@@ -209,6 +227,7 @@ class SystemConfig(Base):
 class FactRollingInventory(Base):
     __tablename__ = "Fact_Rolling_Inventory"
     planning_id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(NVARCHAR(50), default='STD', index=True) # Partition Key
     sku_id = Column(NVARCHAR(50), nullable=False, index=True)
     warehouse_id = Column(NVARCHAR(50), default='ALL', index=True) # Added for Granular Planning
     bucket_date = Column(Date, nullable=False, index=True) # Start of Week/Month
@@ -230,9 +249,9 @@ class PlanningDistributionProfile(Base):
     profile_id = Column(NVARCHAR(50), primary_key=True) # e.g. 'STD', 'B2C', 'B2B'
     profile_name = Column(NVARCHAR(100), nullable=False)
     description = Column(NVARCHAR(255))
-    # Ratios (Must sum to 1.0 ideally, but logic handles normalization)
-    week_1_ratio = Column(Float, default=0.25)
-    week_2_ratio = Column(Float, default=0.25)
-    week_3_ratio = Column(Float, default=0.25)
-    week_4_ratio = Column(Float, default=0.25)
+    # Weekly Ratios (Sum to 1.0)
+    week1 = Column(Float, default=0.25)
+    week2 = Column(Float, default=0.25)
+    week3 = Column(Float, default=0.25)
+    week4 = Column(Float, default=0.25)
     is_active = Column(Boolean, default=True)

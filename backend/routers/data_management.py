@@ -1,15 +1,16 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import pandas as pd
 import io
 import uuid
+import json
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
 from datetime import datetime
 from backend.database import get_db
-from backend.models import DimProducts, DimVendors, FactPurchasePlans, FactSales, DimUnits, DimProductGroups, DimWarehouses, DimCustomerGroups, DimCustomers, SystemConfig, SystemSyncLogs, FactInventorySnapshots, FactRollingInventory, PlanningDistributionProfile
+from backend.models import DimProducts, DimVendors, FactPurchasePlans, FactSales, DimUnits, DimProductGroups, DimWarehouses, DimCustomerGroups, DimCustomers, SystemConfig, SystemSyncLogs, FactInventorySnapshots, FactRollingInventory, PlanningDistributionProfile, FactOpeningStock
 from backend.services.sync_service import SyncService
 
 router = APIRouter(
@@ -63,15 +64,69 @@ class ProductUpdate(BaseModel):
     pack_size: Optional[float] = None
 
 # --- Helper Functions ---
+
+def get_recursive_group_ids(db: Session, group_id: str) -> List[str]:
+    """
+    Recursively fetch all child group IDs for a given group_id.
+    Returns a list including the parent group_id itself.
+    """
+    all_group_ids = [group_id]
+    
+    def get_children(parent_id):
+        children = db.query(DimProductGroups.group_id).filter(DimProductGroups.parent_id == parent_id).all()
+        ids = [c[0] for c in children]
+        for cid in ids:
+            all_group_ids.append(cid)
+            get_children(cid) # Recurse
+            
+    get_children(group_id)
+    return list(set(all_group_ids)) # Ensure uniqueness
+
+# --- Helper Functions ---
+
+def find_header_row(df: pd.DataFrame, keywords: List[str]) -> tuple[pd.DataFrame, bool]:
+    """
+    Attempts to find the header row by scanning the first 20 rows.
+    Returns: (df_starting_from_data, header_found_status)
+    """
+    count = 0
+    header_found = False
+    
+    for i, row in df.head(20).iterrows():
+        row_str = [str(x).lower().strip() for x in row.values]
+        if any(k in val for k in keywords for val in row_str):
+            print(f"[IMPORT DEBUG] Found header at row {i} matching keys: {keywords}")
+            df.columns = df.iloc[i] # Set header
+            df = df.iloc[i+1:] # Data starts after header
+            header_found = True
+            break
+            
+    # Normalize Headers
+    df.columns = [str(c).strip() for c in df.columns]
+    return df, header_found
+
 def process_products_file(df: pd.DataFrame, db: Session):
+    # Smart Header Search
+    df, _ = find_header_row(df, ['sku', 'product code', 'mã hàng', 'ma_hang', 'product_code'])
+    
+    # Robust Column Mapping
+    col_sku = next((c for c in df.columns if ('sku' in c.lower() or 'mã hàng' in c.lower() or 'code' in c.lower()) and 'group' not in c.lower()), None)
+    col_name = next((c for c in df.columns if 'name' in c.lower() or 'tên' in c.lower()), None)
+    col_cat = next((c for c in df.columns if 'category' in c.lower() or 'nhóm' in c.lower()), None)
+    col_unit = next((c for c in df.columns if 'unit' in c.lower() or 'đơn vị' in c.lower()), None)
+
     count = 0
     for _, row in df.iterrows():
         try:
-            raw_id = row.get('sku_id') or row.get('Product Code')
-            sku = "" if pd.isna(raw_id) or str(raw_id).lower() == 'nan' else str(raw_id).strip()
+            sku = ""
+            if col_sku:
+                raw = row[col_sku]
+                sku = "" if pd.isna(raw) or str(raw).lower() == 'nan' else str(raw).strip()
             
-            raw_name = row.get('product_name') or row.get('Product Name')
-            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            name = ""
+            if col_name:
+                raw = row[col_name]
+                name = "" if pd.isna(raw) else str(raw).strip()
             
             if not name and not sku: continue
             
@@ -87,14 +142,15 @@ def process_products_file(df: pd.DataFrame, db: Session):
             if name: prod.product_name = name
             
             # Optional fields
-            cat = row.get('category')
-            if cat and not pd.isna(cat): prod.category = str(cat)
+            if col_cat:
+                val = row[col_cat]
+                if not pd.isna(val): prod.category = str(val)
             
-            unit = row.get('unit')
-            if unit and not pd.isna(unit): prod.unit = str(unit)
+            if col_unit:
+                val = row[col_unit]
+                if not pd.isna(val): prod.unit = str(val)
 
-            stock_min = row.get('min_stock_level')
-            if stock_min and not pd.isna(stock_min): prod.min_stock_level = float(stock_min)
+            # min_stock mapping could be added if needed, sticking to primary fields
             
             db.flush()
             count += 1
@@ -106,14 +162,24 @@ def process_products_file(df: pd.DataFrame, db: Session):
     return count
 
 def process_vendors_file(df: pd.DataFrame, db: Session):
+    # Smart Header Search
+    df, _ = find_header_row(df, ['vendor_id', 'mã ncc', 'partner', 'vendor'])
+
+    col_id = next((c for c in df.columns if 'id' in c.lower() or 'mã' in c.lower()), None)
+    col_name = next((c for c in df.columns if 'name' in c.lower() or 'tên' in c.lower()), None)
+
     count = 0
     for _, row in df.iterrows():
         try:
-            raw_id = row.get('vendor_id')
-            vid = "" if pd.isna(raw_id) or str(raw_id).lower() == 'nan' else str(raw_id).strip()
+            vid = ""
+            if col_id:
+                raw = row[col_id]
+                vid = "" if pd.isna(raw) or str(raw).lower() == 'nan' else str(raw).strip()
             
-            raw_name = row.get('vendor_name') or row.get('Vendor Name') or row.get('Partner Name')
-            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            name = ""
+            if col_name:
+                raw = row[col_name]
+                name = "" if pd.isna(raw) else str(raw).strip()
             
             if not name and not vid: continue
             
@@ -128,10 +194,6 @@ def process_vendors_file(df: pd.DataFrame, db: Session):
             
             if name: vendor.vendor_name = name
             
-            # Optional fields
-            lead_time = row.get('lead_time_avg')
-            if lead_time and not pd.isna(lead_time): vendor.lead_time_avg = float(lead_time)
-            
             db.flush()
             count += 1
         except Exception:
@@ -142,90 +204,73 @@ def process_vendors_file(df: pd.DataFrame, db: Session):
     return count
 
 def process_units_file(df: pd.DataFrame, db: Session):
+    df, _ = find_header_row(df, ['unit_id', 'mã đvt', 'unit name', 'tên đvt'])
+    
+    col_id = next((c for c in df.columns if 'id' in c.lower() or 'mã' in c.lower()), None)
+    col_name = next((c for c in df.columns if 'name' in c.lower() or 'tên' in c.lower()), None)
+    
     count = 0
     for _, row in df.iterrows():
         try:
-            # Handle ID
-            raw_uid = row.get('unit_id')
-            if pd.isna(raw_uid):
-                uid = ""
-            else:
-                uid = str(raw_uid).strip()
+            uid = ""
+            if col_id:
+                raw = row[col_id]
+                uid = str(raw).strip() if not pd.isna(raw) else ""
                 if uid.lower() == 'nan': uid = ""
 
-            # Handle Name
-            raw_name = row.get('unit_name') or row.get('Unit Name')
-            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            name = ""
+            if col_name:
+                raw = row[col_name]
+                name = str(raw).strip() if not pd.isna(raw) else ""
             
-            if not name and not uid:
-                # print(f"[IMPORT-SKIP] Empty row")
-                continue
-
-            print(f"[IMPORT-ROW] UID='{uid}', Name='{name}'")
+            if not name and not uid: continue
 
             unit = None
-            # 1. Try finding by ID
-            if uid:
-                unit = db.query(DimUnits).filter(DimUnits.unit_id == uid).first()
-                if unit: print(f"  -> Found by ID: {unit.unit_name}")
-            
-            # 2. If no ID or not found by ID, try finding by Name (if valid name)
-            if not unit and name:
-                 unit = db.query(DimUnits).filter(DimUnits.unit_name == name).first()
-                 if unit: print(f"  -> Found by Name: {unit.unit_id}")
+            if uid: unit = db.query(DimUnits).filter(DimUnits.unit_id == uid).first()
+            if not unit and name: unit = db.query(DimUnits).filter(DimUnits.unit_name == name).first()
 
-            # 3. If still not found, Create New
             if not unit:
-                # If we don't have an ID, generate one
                 final_id = uid if uid else str(uuid.uuid4())
-                print(f"  -> Creating NEW with ID: {final_id}")
                 unit = DimUnits(unit_id=final_id)
                 db.add(unit)
-            else:
-                 print("  -> Updating existing.")
             
-            # Update fields
-            if name:
-                unit.unit_name = name
+            if name: unit.unit_name = name
             
-            # Flush per row to catch errors immediately (PERFORMANCE HIT but good for debugging)
             db.flush()
             count += 1
-        except Exception as e:
-            print(f"[IMPORT-ERROR] Row Failed: {e}")
-            db.rollback() # Rollback the failed row
-            continue # Continue to next row
-
-    try:
-        db.commit()
-    except Exception as e:
-        print(f"[IMPORT-COMMIT-ERROR] {e}")
-        db.rollback()
-
-    print(f"[IMPORT-DONE] Processed {count} records.")
+        except Exception:
+            db.rollback()
+            continue
+    try: db.commit()
+    except: db.rollback()
     return count
 
 def process_groups_file(df: pd.DataFrame, db: Session):
+    df, _ = find_header_row(df, ['group_id', 'mã nhóm', 'group name', 'tên nhóm'])
+    
+    col_id = next((c for c in df.columns if 'id' in c.lower() or 'mã' in c.lower()), None)
+    col_name = next((c for c in df.columns if 'name' in c.lower() or 'tên' in c.lower()), None)
+    
     count = 0
     for _, row in df.iterrows():
         try:
-            # Handle ID
-            raw_id = row.get('group_id')
-            gid = "" if pd.isna(raw_id) or str(raw_id).lower() == 'nan' else str(raw_id).strip()
+            gid = ""
+            if col_id:
+                raw = row[col_id]
+                gid = str(raw).strip() if not pd.isna(raw) else ""
+                if gid.lower() == 'nan': gid = ""
             
-            # Handle Name
-            raw_name = row.get('group_name') or row.get('Group Name')
-            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            name = ""
+            if col_name:
+                raw = row[col_name]
+                name = str(raw).strip() if not pd.isna(raw) else ""
             
             if not name and not gid: continue
             
             group = None
-            if gid:
-                 group = db.query(DimProductGroups).filter(DimProductGroups.group_id == gid).first()
+            if gid: group = db.query(DimProductGroups).filter(DimProductGroups.group_id == gid).first()
+            if not group and name: group = db.query(DimProductGroups).filter(DimProductGroups.group_name == name).first()
             
-            if not group and name:
-                 group = db.query(DimProductGroups).filter(DimProductGroups.group_name == name).first()
-                 
             if not group:
                 final_id = gid if gid else str(uuid.uuid4())
                 group = DimProductGroups(group_id=final_id)
@@ -243,24 +288,36 @@ def process_groups_file(df: pd.DataFrame, db: Session):
     return count
 
 def process_warehouses_file(df: pd.DataFrame, db: Session):
+    df, _ = find_header_row(df, ['warehouse', 'kho', 'mã kho', 'tên kho'])
+    
+    col_id = next((c for c in df.columns if 'id' in c.lower() or 'mã' in c.lower()), None)
+    col_name = next((c for c in df.columns if 'name' in c.lower() or 'tên' in c.lower()), None)
+    col_branch = next((c for c in df.columns if 'branch' in c.lower() or 'nhánh' in c.lower()), None) # Optional
+    
     count = 0
     for _, row in df.iterrows():
         try:
-            raw_id = row.get('warehouse_id')
-            wid = "" if pd.isna(raw_id) or str(raw_id).lower() == 'nan' else str(raw_id).strip()
+            wid = ""
+            if col_id:
+                raw = row[col_id]
+                wid = str(raw).strip() if not pd.isna(raw) else ""
+                if wid.lower() == 'nan': wid = ""
             
-            raw_name = row.get('warehouse_name') or row.get('Warehouse Name')
-            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            name = ""
+            if col_name:
+                raw = row[col_name]
+                name = str(raw).strip() if not pd.isna(raw) else ""
             
-            branch_id = row.get('branch_id')
-            
+            start_branch = ""
+            if col_branch:
+                raw = row[col_branch]
+                start_branch = str(raw).strip() if not pd.isna(raw) else ""
+
             if not name and not wid: continue
             
             wh = None
-            if wid:
-                wh = db.query(DimWarehouses).filter(DimWarehouses.warehouse_id == wid).first()
-            if not wh and name:
-                wh = db.query(DimWarehouses).filter(DimWarehouses.warehouse_name == name).first()
+            if wid: wh = db.query(DimWarehouses).filter(DimWarehouses.warehouse_id == wid).first()
+            if not wh and name: wh = db.query(DimWarehouses).filter(DimWarehouses.warehouse_name == name).first()
                 
             if not wh:
                 final_id = wid if wid else str(uuid.uuid4())
@@ -268,7 +325,7 @@ def process_warehouses_file(df: pd.DataFrame, db: Session):
                 db.add(wh)
                 
             if name: wh.warehouse_name = name
-            if branch_id and not pd.isna(branch_id): wh.branch_id = str(branch_id)
+            if start_branch: wh.branch_id = start_branch
             
             db.flush()
             count += 1
@@ -356,11 +413,44 @@ def process_partner_groups_file(df: pd.DataFrame, db: Session):
     except: db.rollback()
     return count
 
-def process_opening_stock_file(df, db: Session):
+def process_opening_stock_file(df: pd.DataFrame, db: Session, import_type: str = 'full'):
+    import re
     from datetime import date, datetime
     try:
         data_rows = df  # Expecting df to be the dataframe
         
+        # 0. Smart Title Date Warning (Scan top 10 rows for "Tháng X năm Y")
+        context_date = None
+        date_pattern_vn = r"tháng\s+(\d{1,2})\s+năm\s+(\d{4})"
+        date_pattern_en = r"month\s+(\d{1,2})\s+year\s+(\d{4})"
+        
+        # Convert first 10 rows to string to search
+        # We need raw access or just iterate dataframe head
+        for i, row in df.head(10).iterrows():
+            row_str = " ".join([str(x).lower() for x in row.values])
+            
+            # Check VN
+            match_vn = re.search(date_pattern_vn, row_str)
+            if match_vn:
+                try:
+                    m = int(match_vn.group(1))
+                    y = int(match_vn.group(2))
+                    context_date = date(y, m, 1)
+                    print(f"[IMPORT] Found Context Date in Title (Row {i}): {context_date}")
+                    break
+                except: pass
+                
+            # Check EN
+            match_en = re.search(date_pattern_en, row_str)
+            if match_en:
+                try:
+                    m = int(match_en.group(1))
+                    y = int(match_en.group(2))
+                    context_date = date(y, m, 1)
+                    print(f"[IMPORT] Found Context Date in Title (Row {i}): {context_date}")
+                    break
+                except: pass
+
         # 1. Identify Columns
         header_row = data_rows.columns.tolist() # Assuming header is already parse correctly by simple read_excel/csv
         # Check if we need to find header row dynamically (as per previous logic)
@@ -375,14 +465,22 @@ def process_opening_stock_file(df, db: Session):
         header_idx = -1
         col_sku = -1
         col_qty = -1
+        col_qty_update = -1 # New
         col_wh_code = -1
         col_wh_name = -1
+        col_date = -1
         
         # Keywords
         sku_keywords = ['sku', 'product_code', 'item_code', 'mã hàng', 'ma_hang', 'part_number']
-        qty_keywords = ['qty', 'quantity', 'stock', 'so_luong', 'số lượng', 'open', 'tồn']
-        wh_code_keywords = ['warehouse_code', 'wh_code', 'ma_kho', 'mã kho']
+        # Re-added 'tồn' but relied on exclusion logic below to avoid 'Mã Kho Tồn' being Qty
+        qty_keywords = ['qty', 'quantity', 'stock', 'so_luong', 'số lượng', 'open', 'sl', 'tồn đầu', 'ton_dau', 'tồn', 'ton']
+        qty_update_keywords = ['quantity_update', 'update', 'thực kiểm', 'thuc kiem', 'tồn thực tế', 'actual', 'kiem_ke']
+        wh_code_keywords = ['warehouse_code', 'wh_code', 'ma_kho', 'mã kho', 'warehouse_id', 'kho', 'warehouse']
         wh_name_keywords = ['warehouse_name', 'wh_name', 'ten_kho', 'tên kho']
+        date_keywords = ['date', 'ngày', 'snapshot_date', 'ngay_chot']
+        unit_keywords = ['unit', 'đơn vị tính', 'dvt', 'uom', 'don_vi_tinh']
+        
+        col_unit = -1
 
         for i, row in enumerate(all_rows[:20]): # Scan first 20 rows
             row_lower = [str(x).lower().strip() for x in row]
@@ -395,13 +493,38 @@ def process_opening_stock_file(df, db: Session):
                         break
                 if col_sku != -1: break
             
-            # Find Qty
+            # Find Warehouse
+            for k in wh_code_keywords:
+                for j, cell in enumerate(row_lower):
+                    if k in cell: col_wh_code = j; break
+            
+            for k in wh_name_keywords:
+                for j, cell in enumerate(row_lower):
+                    if k in cell: col_wh_name = j; break
+            
+            # Find Qty (Exclude if it was identified as Warehouse)
             for k in qty_keywords:
                 for j, cell in enumerate(row_lower):
-                    if k in cell: 
+                    if k in cell and j != col_wh_code and j != col_wh_name and j != col_sku: 
                         col_qty = j
                         break
                 if col_qty != -1: break
+
+            # Find Qty Update (New)
+            for k in qty_update_keywords:
+                for j, cell in enumerate(row_lower):
+                    if k in cell:
+                        col_qty_update = j
+                        break
+                if col_qty_update != -1: break
+
+            # Find Unit
+            for k in unit_keywords:
+                for j, cell in enumerate(row_lower):
+                    if k in cell: 
+                        col_unit = j
+                        break
+                if col_unit != -1: break
                 
             # Find Warehouse
             for k in wh_code_keywords:
@@ -411,12 +534,49 @@ def process_opening_stock_file(df, db: Session):
             for k in wh_name_keywords:
                 for j, cell in enumerate(row_lower):
                     if k in cell: col_wh_name = j; break
+            
+            # Find Date (Vertical Mode)
+            for k in date_keywords:
+                for j, cell in enumerate(row_lower):
+                    if k in cell: col_date = j; break
 
-            if col_sku != -1 and col_qty != -1:
+            # Header Validity Logic
+            # If Full Import: SKU + Qty required
+            # If Update Import: SKU + (Qty OR Qty Update) required
+            valid_header = False
+            fallback_used = False
+
+            if col_sku != -1:
+                if import_type == 'full' and col_qty != -1: valid_header = True
+                elif import_type == 'update':
+                    if col_qty_update != -1: valid_header = True
+                    elif col_qty != -1: 
+                        # Fallback: treat generic Qty as Update Qty
+                        col_qty_update = col_qty
+                        col_qty = -1
+                        valid_header = True
+                        fallback_used = True
+
+            if valid_header:
                 header_idx = i
+                with open("import_debug.log", "a", encoding="utf-8") as f:
+                    f.write(f"HEADER FOUND at Row {i}:\n")
+                    f.write(f"  SKU Index: {col_sku} ('{all_rows[i][col_sku]}')\n")
+                    f.write(f"  Qty Index: {col_qty} ('{all_rows[i][col_qty] if col_qty!=-1 else 'N/A'}')\n")
+                    f.write(f"  QtyUpdate Index: {col_qty_update} ('{all_rows[i][col_qty_update] if col_qty_update!=-1 else 'N/A'}')\n")
+                    f.write(f"  Unit Index: {col_unit} ('{all_rows[i][col_unit] if col_unit!=-1 else 'N/A'}')\n")
+                    f.write(f"  WhCode Index: {col_wh_code}\n")
+                    f.write(f"  fallback_used: {fallback_used}\n")
+                    f.write(f"  Full Row: {all_rows[i]}\n")
                 break
+
+
         
         if header_idx == -1:
+             with open("import_debug.log", "a", encoding="utf-8") as f:
+                f.write("HEADER NOT FOUND. Scanned 20 rows.\n")
+                for i, row in enumerate(all_rows[:5]):
+                    f.write(f"Row {i}: {row}\n")
              return 0, ["Could not find header row with SKU and Quantity columns."]
 
         # Correct Data Slice
@@ -505,93 +665,166 @@ def process_opening_stock_file(df, db: Session):
                             if wh_name: wh_map_by_name[wh_name.lower()] = new_wh
                             db.add(new_wh) 
                             final_wh_id = new_id
+                            
+                # DATE LOGIC
+                row_date = None
+                if col_date != -1 and col_date < len(row):
+                     try:
+                        val = row[col_date]
+                        if not pd.isna(val):
+                            if isinstance(val, (datetime, date)):
+                                row_date = val
+                            else:
+                                row_date = pd.to_datetime(val, dayfirst=True).date()
+                     except: pass
+
+                # Helper: Robust Number Parse
+                def parse_number(val):
+                    if pd.isna(val): return None
+                    s = str(val).strip()
+                    if not s: return None
+                    try:
+                        return float(s)
+                    except:
+                        # Handle 1,000.00 vs 1.000,00
+                        # Simple Heuristic: Remove all non-numeric chars except last separator?
+                        # Better: Just handle common VN/US cases.
+                        try:
+                            # Try removing comma (US Thousands)
+                            return float(s.replace(',', ''))
+                        except:
+                            try:
+                                # Try removing dot (VN Thousands) and replacing comma with dot
+                                return float(s.replace('.', '').replace(',', '.'))
+                            except:
+                                return None
 
                 # EXTRACT QUANTITIES
+                # Capture Unit Value for Fact Table
+                extracted_unit = ""
+                if col_unit != -1 and col_unit < len(row):
+                    u_val = str(row[col_unit]).strip()
+                    if u_val and u_val.lower() != 'nan':
+                        extracted_unit = u_val
+
+                q_original = None
+                q_update = None
+
                 if is_matrix_mode:
                     # Matrix Mode: Multiple dates per row
                     for (col_idx, d_obj) in date_cols:
                         if col_idx < len(row):
-                            try:
-                                val = row[col_idx]
-                                if not pd.isna(val):
-                                    q = float(val)
-                                    updates[(sku, final_wh_id, d_obj)] = q
-                            except: pass
+                            q = parse_number(row[col_idx])
+                            if q is not None and q != 0:
+                                updates[(sku, final_wh_id, d_obj)] = (q, None, extracted_unit)
                 else:
-                    # Single Column Mode (Fallback)
-                    qty = 0
-                    if col_qty != -1 and col_qty < len(row):
-                       try:
-                           val = row[col_qty]
-                           if not pd.isna(val): qty = float(val)
-                       except: pass
+                    # Single Column Mode
                     
-                    # bucket_date default
-                    default_date = date(datetime.now().year, datetime.now().month, 1)
-                    updates[(sku, final_wh_id, default_date)] = qty
+                    # 1. Original Qty
+                    if col_qty != -1 and col_qty < len(row):
+                        q_original = parse_number(row[col_qty])
+                    
+                    # 2. Update Qty
+                    if col_qty_update != -1 and col_qty_update < len(row):
+                        q_update = parse_number(row[col_qty_update])
+                    
+                    # Debug Log for rows 0-10 or if Zero/None
+                    if r_idx < 10 or q_original is None:
+                         with open("import_debug.log", "a", encoding="utf-8") as f:
+                             f.write(f"Row {r_idx}: SKU={sku} Qty(Col {col_qty})='{row[col_qty] if col_qty!=-1 else 'N/A'}' -> {q_original}. Unit='{extracted_unit}'\n")
+
+                    # bucket_date determination
+                    if row_date:
+                        final_date = date(row_date.year, row_date.month, 1)
+                    elif context_date:
+                        final_date = context_date
+                    else:
+                        final_date = date(datetime.now().year, datetime.now().month, 1)
+                        
+                    if (q_original is not None and q_original != 0) or (q_update is not None and q_update != 0):
+                         updates[(sku, final_wh_id, final_date)] = (q_original, q_update, extracted_unit)
                 
+                # Update UNIT Check (DimProducts)
+                if extracted_unit:
+                    p = db.query(DimProducts).filter(DimProducts.sku_id == sku).first()
+                    if p:
+                        if not p.unit or p.unit == p.sku_id: 
+                            p.unit = extracted_unit
+
             except Exception as e:
                 errors.append(f"Row {r_idx}: {str(e)}")
 
         # Flush new warehouses
         db.flush()
 
-        # 5. Bulk Upsert Inventory
-        # Update BOTH FactRollingInventory (for Planning) AND FactInventorySnapshots (for UI/Record)
-        
-        # A. FactRollingInventory (Existing Logic)
+        # 5. Bulk Upsert
         involved_dates = set([k[2] for k in updates.keys()])
+        
         existing_rolling = db.query(FactRollingInventory).filter(
             FactRollingInventory.bucket_date.in_(involved_dates)
         ).all()
         rolling_map = {(r.sku_id, r.warehouse_id, r.bucket_date): r for r in existing_rolling}
         
-        # B. FactInventorySnapshots (New Logic for UI)
-        existing_snaps = db.query(FactInventorySnapshots).filter(
-            FactInventorySnapshots.snapshot_date.in_(involved_dates)
+        existing_snaps = db.query(FactOpeningStock).filter(
+            FactOpeningStock.stock_date.in_(involved_dates)
         ).all()
-        snap_map = {(r.sku_id, r.warehouse_id, r.snapshot_date): r for r in existing_snaps}
+        snap_map = {(r.sku_id, r.warehouse_id, r.stock_date): r for r in existing_snaps}
         
         count = 0
-        for (sku, wh_id, b_date), qty in updates.items():
-            # 1. Update Rolling
+        for (sku, wh_id, b_date), (q_orig, q_upd, unit_val) in updates.items():
+            
+            snap = None
+            if (sku, wh_id, b_date) in snap_map:
+                snap = snap_map[(sku, wh_id, b_date)]
+            else:
+                snap = FactOpeningStock(
+                    stock_date=b_date,
+                    sku_id=sku,
+                    warehouse_id=wh_id,
+                    quantity=0,
+                    notes='Imported'
+                )
+                db.add(snap)
+            
+            if q_orig is not None and import_type == 'full':
+                snap.quantity = q_orig
+            
+            if q_upd is not None:
+                snap.quantity_update = q_upd
+                
+            if unit_val:
+                snap.unit = unit_val
+                
+            snap.updated_at = datetime.now()
+            
+            # Sync to Rolling (Immediate)
+            # Rolling uses coalesce(update, quantity)
+            effective_qty = snap.quantity_update if (snap.quantity_update is not None and snap.quantity_update > 0) else snap.quantity
+            
             if (sku, wh_id, b_date) in rolling_map:
-                rolling_map[(sku, wh_id, b_date)].opening_stock = qty
+                rolling_map[(sku, wh_id, b_date)].opening_stock = effective_qty
                 rolling_map[(sku, wh_id, b_date)].updated_at = datetime.now()
             else:
                 new_roll = FactRollingInventory(
                     sku_id=sku,
                     warehouse_id=wh_id,
                     bucket_date=b_date,
-                    opening_stock=qty,
+                    opening_stock=effective_qty,
                     updated_at=datetime.now()
                 )
                 db.add(new_roll)
-            
-            # 2. Update Snapshot
-            if (sku, wh_id, b_date) in snap_map:
-                snap_map[(sku, wh_id, b_date)].quantity_on_hand = qty
-                # snap_map[(sku, wh_id, b_date)].updated_at = datetime.now() 
-            else:
-                new_snap = FactInventorySnapshots(
-                    snapshot_date=b_date,
-                    sku_id=sku,
-                    warehouse_id=wh_id,
-                    quantity_on_hand=qty,
-                    quantity_on_order=0,
-                    quantity_allocated=0,
-                    unit='Unknown', # Will resolve from Product
-                    notes='Imported Opening Stock'
-                )
-                db.add(new_snap)
-                
+
             count += 1
+                
+
             
         db.commit()
         return count, errors
-
+    
     except Exception as e:
         db.rollback()
+        with open("import_debug.log", "a", encoding="utf-8") as f:
+             f.write(f"Global Error: {e}\n")
         print(f"Global Import Error: {e}")
         return 0, [str(e)]
 
@@ -610,103 +843,110 @@ def get_inventory(
     db: Session = Depends(get_db)
 ):
     """
-    Get inventory snapshots filtered by date range.
+    Get Opening Stock (Planning Input) filtered by date range.
+    Reads from FactOpeningStock.
     """
     # Join with Product first
     query = db.query(
-        FactInventorySnapshots, 
+        FactOpeningStock, 
         DimProducts.product_name,
         DimProducts.unit.label('product_unit'),
         DimProducts.group_id,
         DimWarehouses.warehouse_name,
         DimProductGroups.group_name
     ).outerjoin(
-        DimProducts, FactInventorySnapshots.sku_id == DimProducts.sku_id
+        DimProducts, FactOpeningStock.sku_id == DimProducts.sku_id
     ).outerjoin(
-        DimWarehouses, FactInventorySnapshots.warehouse_id == DimWarehouses.warehouse_id
+        DimWarehouses, FactOpeningStock.warehouse_id == DimWarehouses.warehouse_id
     ).outerjoin(
         DimProductGroups, DimProducts.group_id == DimProductGroups.group_id
     )
 
+
     if search:
         st = f"%{search}%"
         query = query.filter(
-            (FactInventorySnapshots.sku_id.ilike(st)) | 
+            (FactOpeningStock.sku_id.ilike(st)) | 
             (DimProducts.product_name.ilike(st))
         )
     
     # Backward compatibility for single date
     if date:
-        query = query.filter(FactInventorySnapshots.snapshot_date == date)
+        query = query.filter(FactOpeningStock.stock_date == date)
     
     # Range Filtering
     if start_date:
-        query = query.filter(FactInventorySnapshots.snapshot_date >= start_date)
+        query = query.filter(FactOpeningStock.stock_date >= start_date)
     if end_date:
-        query = query.filter(FactInventorySnapshots.snapshot_date <= end_date)
+        query = query.filter(FactOpeningStock.stock_date <= end_date)
 
     if warehouse_id and warehouse_id != 'ALL':
-        query = query.filter(FactInventorySnapshots.warehouse_id == warehouse_id)
+        query = query.filter(FactOpeningStock.warehouse_id == warehouse_id)
 
     
     if group_id and group_id != 'ALL':
         query = query.filter(DimProducts.group_id == group_id)
     
-    # Sort by recent date first
+    # ... (Keep query construction as is mostly, just reuse it)
+    
     total = query.count()
+    data = query.order_by(FactOpeningStock.stock_date.desc()).offset(skip).limit(limit).all()
     
-    # Calculate Aggregates (Sum of visible dataset based on filters)
-    from sqlalchemy import func
-    aggs = query.with_entities(
-        func.sum(FactInventorySnapshots.quantity_on_hand).label('total_on_hand'),
-        func.sum(FactInventorySnapshots.quantity_on_order).label('total_on_order'),
-        func.sum(FactInventorySnapshots.quantity_allocated).label('total_allocated')
-    ).first()
+    # Aggregates (Reuse the filtered query)
+    from sqlalchemy import func, case, cast, Float
     
-    aggregates = {
-        "total_on_hand": aggs.total_on_hand or 0,
-        "total_on_order": aggs.total_on_order or 0,
-        "total_allocated": aggs.total_allocated or 0
-    }
-
-    # Apply pagination
-    paginated_query = query.order_by(
-        FactInventorySnapshots.snapshot_date.desc(), 
-        FactInventorySnapshots.sku_id.asc()
-    ).offset(skip).limit(limit)
+    # Effective Quantity Logic: if qty_update > 0, use it; else use original quantity
+    effective_qty_expr = case(
+        (FactOpeningStock.quantity_update > 0, FactOpeningStock.quantity_update),
+        else_=FactOpeningStock.quantity
+    )
     
-    data = paginated_query.all()
+    # We need to clone the query to remove loading specific columns and just sum
+    # However, existing query selects multiple entities. 
+    # Easiest way is to build a fresh aggregate query with the SAME filters.
+    # But reusing 'query' with .with_entities replacements is cleaner if possible.
+    
+    # Create aggregate query by replacing the SELECT list
+    agg_query = query.with_entities(
+        func.sum(effective_qty_expr).label('total_on_hand')
+    )
+    
+    total_qty = agg_query.scalar() or 0
     
     result = []
     for row in data:
-        snap = row[0]
-        p_name = row[1] or ""
-        p_unit = row[2]
-        w_name = row[4] or snap.warehouse_id 
-        g_name = row[5] or ""
+        # row: (FactOpeningStock, product_name, unit, group_id, warehouse_name, group_name)
+        item = row[0]
         
-        final_unit = snap.unit
-        if not final_unit or final_unit.lower() == 'unknown':
-            final_unit = p_unit
+        # Calculate effective quantity for display
+        q_update = item.quantity_update
+        q_original = item.quantity
+        q_hand = q_update if (q_update is not None and q_update > 0) else q_original
         
         result.append({
-            "snapshot_date": snap.snapshot_date.isoformat(),
-            "warehouse_id": snap.warehouse_id,
-            "warehouse_name": w_name,
-            "sku_id": snap.sku_id,
-            "product_name": p_name,
-            "group_name": g_name,
-            "quantity_on_hand": snap.quantity_on_hand,
-            "quantity_on_order": snap.quantity_on_order,
-            "quantity_allocated": snap.quantity_allocated,
-            "unit": final_unit,
-            "notes": snap.notes
+            "snapshot_date": item.stock_date, 
+            "sku_id": item.sku_id,
+            "product_name": row[1],
+            "warehouse_id": item.warehouse_id,
+            "warehouse_name": row[4],
+            "quantity_on_hand": q_hand,
+            "quantity_original": q_original, # New field
+            "quantity_update": q_update,     # New field
+            "quantity_on_order": 0,
+            "quantity_allocated": 0,
+            "unit": row[2] or item.sku_id, # Fallback to SKU if Unit is missing? Or maybe empty string.
+            "group_name": row[5],
+            "notes": item.notes
         })
         
     return {
-        "data": result, 
+        "data": result,
         "total": total,
-        "aggregates": aggregates
+        "aggregates": {
+            "total_on_hand": total_qty,
+            "total_on_order": 0,
+            "total_allocated": 0
+        }
     }
 
 @router.get("/sales")
@@ -770,6 +1010,7 @@ def get_purchases(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     type: Optional[str] = None, # ACTUAL / PLANNED
+    group_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -795,6 +1036,10 @@ def get_purchases(
     
     if type and type != 'ALL':
         query = query.filter(FactPurchases.purchase_type == type)
+        
+    if group_id and group_id != 'ALL':
+        all_ids = get_recursive_group_ids(db, group_id)
+        query = query.filter(DimProducts.group_id.in_(all_ids))
         
     total = query.count()
     
@@ -1022,6 +1267,302 @@ def process_sales_details_file(df: pd.DataFrame, db: Session):
         
     return count, errors
 
+from pydantic import BaseModel
+from datetime import datetime
+from backend.models import FactInventorySnapshots
+
+@router.get("/inventory")
+def get_inventory(
+    skip: int = 0,
+    limit: int = 50,
+    search: Optional[str] = None,
+    date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    warehouse_id: Optional[str] = None,
+    group_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get Opening Stock (Planning Input) filtered by date range.
+    Reads from FactOpeningStock.
+    """
+    # Join with Product first
+    query = db.query(
+        FactOpeningStock,
+        DimProducts.product_name,
+        DimProducts.unit.label('product_unit'),
+        DimProducts.group_id,
+        DimWarehouses.warehouse_name,
+        DimProductGroups.group_name
+    ).outerjoin(
+        DimProducts, FactOpeningStock.sku_id == DimProducts.sku_id
+    ).outerjoin(
+        DimWarehouses, FactOpeningStock.warehouse_id == DimWarehouses.warehouse_id
+    ).outerjoin(
+        DimProductGroups, DimProducts.group_id == DimProductGroups.group_id
+    )
+
+    if search:
+        st = f"%{search}%"
+        query = query.filter(
+            (FactOpeningStock.sku_id.ilike(st)) | 
+            (DimProducts.product_name.ilike(st))
+        )
+    
+    # Backward compatibility for single date
+    if date:
+        query = query.filter(FactOpeningStock.stock_date == date)
+    
+    # Range Filtering
+    if start_date:
+        query = query.filter(FactOpeningStock.stock_date >= start_date)
+    if end_date:
+        query = query.filter(FactOpeningStock.stock_date <= end_date)
+
+    if warehouse_id and warehouse_id != 'ALL':
+        query = query.filter(FactOpeningStock.warehouse_id == warehouse_id)
+
+    if group_id and group_id != 'ALL':
+        # Recursive Filter
+        all_ids = get_recursive_group_ids(db, group_id)
+        query = query.filter(DimProducts.group_id.in_(all_ids))
+    
+    total = query.count()
+    data = query.order_by(FactOpeningStock.stock_date.desc()).offset(skip).limit(limit).all()
+    
+    # Aggregates
+    total_qty = db.query(func.sum(FactOpeningStock.quantity)).scalar() or 0
+    
+    result = []
+    for row in data:
+        # row: (FactOpeningStock, product_name, unit, group_id, warehouse_name, group_name)
+        item = row[0]
+        result.append({
+            "snapshot_date": item.stock_date, # Map to frontend expected key
+            "sku_id": item.sku_id,
+            "product_name": row[1],
+            "warehouse_id": item.warehouse_id,
+            "warehouse_name": row[4],
+            "warehouse_name": row[4],
+            "quantity_on_hand": (item.quantity_update if item.quantity_update is not None and item.quantity_update > 0 else item.quantity), # Effective Qty
+            "quantity_original": item.quantity, # Original Import
+            "quantity_update": item.quantity_update, # Manual Override
+            "quantity_on_order": 0, # Not relevant for Opening Stock
+            "quantity_allocated": 0,
+            "unit": item.unit or row[2] or "", # Prefer Fact unit, then Master unit, then empty
+            "group_id": row[3], # Index 3 is DimProducts.group_id
+            "group_name": row[5],
+            "notes": item.notes
+        })
+        
+    return {
+        "data": result,
+        "total": total,
+        "aggregates": {
+            "total_on_hand": total_qty,
+            "total_on_order": 0,
+            "total_allocated": 0
+        }
+    }
+
+@router.get("/snapshots")
+def get_inventory_snapshots(
+    skip: int = 0,
+    limit: int = 50,
+    search: Optional[str] = None,
+    warehouse_id: Optional[str] = None,
+    group_id: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get Realtime Inventory Snapshots.
+    Reads from FactInventorySnapshots.
+    """
+    query = db.query(
+        FactInventorySnapshots, 
+        DimProducts.product_name,
+        DimProducts.unit.label('product_unit'),
+        DimProducts.group_id,
+        DimWarehouses.warehouse_name,
+        DimProductGroups.group_name
+    ).outerjoin(
+        DimProducts, FactInventorySnapshots.sku_id == DimProducts.sku_id
+    ).outerjoin(
+        DimWarehouses, FactInventorySnapshots.warehouse_id == DimWarehouses.warehouse_id
+    ).outerjoin(
+        DimProductGroups, DimProducts.group_id == DimProductGroups.group_id
+    )
+
+    if start_date:
+        query = query.filter(FactInventorySnapshots.snapshot_date >= start_date)
+    if end_date:
+        query = query.filter(FactInventorySnapshots.snapshot_date <= end_date)
+
+    if search:
+        st = f"%{search}%"
+        query = query.filter(
+            (FactInventorySnapshots.sku_id.ilike(st)) | 
+            (DimProducts.product_name.ilike(st))
+        )
+
+    if warehouse_id and warehouse_id != 'ALL':
+        query = query.filter(FactInventorySnapshots.warehouse_id == warehouse_id)
+    
+    if group_id and group_id != 'ALL':
+        all_ids = get_recursive_group_ids(db, group_id)
+        query = query.filter(DimProducts.group_id.in_(all_ids))
+    
+    
+    # Calculate Sum for On Hand
+    total_qty = db.query(func.sum(FactInventorySnapshots.quantity_on_hand)).filter(
+        FactInventorySnapshots.sku_id.in_(query.with_entities(FactInventorySnapshots.sku_id))
+    ).scalar() or 0
+    # Optimization: Re-using the query filters would be better but simple subquery is safer for now given complex joins.
+    # Actually, we can reuse 'query' but we need to select func.sum instead of entities.
+    # Let's use a simpler approach reusing filters if possible, but query object already has entities selected.
+    # Safe way:
+    total_qty = query.with_entities(func.sum(FactInventorySnapshots.quantity_on_hand)).scalar() or 0
+
+    total = query.count()
+    data = query.order_by(FactInventorySnapshots.snapshot_date.desc()).offset(skip).limit(limit).all()
+    
+    result = []
+    for row in data:
+        item = row[0]
+        result.append({
+            "snapshot_date": item.snapshot_date,
+            "sku_id": item.sku_id,
+            "product_name": row[1],
+            "warehouse_id": item.warehouse_id,
+            "warehouse_name": row[4],
+            "quantity_on_hand": item.quantity_on_hand,
+            "quantity_on_order": item.quantity_on_order,
+            "quantity_allocated": item.quantity_allocated,
+            "unit": row[2] or item.unit or item.sku_id, # Fallback to Fact Unit then SKU
+            "group_name": row[5],
+            "notes": item.notes
+        })
+        
+    return {
+        "data": result,
+        "total": total,
+        "aggregates": {
+            "total_on_hand": total_qty
+        }
+    }
+
+# ... (CSV Gen) ...
+
+
+class OpeningStockUpdate(BaseModel):
+    sku_id: str
+    warehouse_id: str
+    snapshot_date: str 
+    quantity_on_hand: float
+    quantity_update: Optional[float] = None
+    group_id: Optional[str] = None
+    new_warehouse_id: Optional[str] = None # Added for Warehouse Move
+
+@router.post("/inventory/update")
+def update_inventory_snapshot(item: OpeningStockUpdate, db: Session = Depends(get_db)):
+    try:
+        stock_date = datetime.strptime(item.snapshot_date, "%Y-%m-%d").date()
+    except:
+        stock_date = datetime.now().date()
+
+    # 1. Update FactOpeningStock
+    existing = db.query(FactOpeningStock).filter(
+        FactOpeningStock.sku_id == item.sku_id,
+        FactOpeningStock.warehouse_id == item.warehouse_id,
+        FactOpeningStock.stock_date == stock_date
+    ).first()
+
+    # Warehouse Move Logic
+    if item.new_warehouse_id and item.new_warehouse_id != item.warehouse_id:
+        if existing:
+            # Delete old record
+            db.delete(existing)
+        
+        # Check if target record exists (to overwrite or create)
+        target = db.query(FactOpeningStock).filter(
+            FactOpeningStock.sku_id == item.sku_id,
+            FactOpeningStock.warehouse_id == item.new_warehouse_id,
+            FactOpeningStock.stock_date == stock_date
+        ).first()
+
+        if target:
+            # Overwrite existing target
+            target.quantity = item.quantity_on_hand
+            if item.quantity_update is not None:
+                target.quantity_update = item.quantity_update
+            target.notes = "Moved from " + item.warehouse_id
+        else:
+            # Create new
+            new_rec = FactOpeningStock(
+                sku_id=item.sku_id,
+                warehouse_id=item.new_warehouse_id,
+                stock_date=stock_date,
+                quantity=item.quantity_on_hand,
+                quantity_update=item.quantity_update,
+                notes="Moved from " + item.warehouse_id
+            )
+            db.add(new_rec)
+            
+    else:
+        # Normal Update
+        if existing:
+            existing.quantity = item.quantity_on_hand
+            if item.quantity_update is not None:
+                 existing.quantity_update = item.quantity_update
+        else:
+            new_rec = FactOpeningStock(
+                sku_id=item.sku_id,
+                warehouse_id=item.warehouse_id,
+                stock_date=stock_date,
+                quantity=item.quantity_on_hand,
+                quantity_update=item.quantity_update,
+                notes="Manual Update"
+            )
+            db.add(new_rec)
+    
+    
+    # 2. Update DimProducts Group if provided
+    if item.group_id:
+        product = db.query(DimProducts).filter(DimProducts.sku_id == item.sku_id).first()
+        if product:
+            product.group_id = item.group_id
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"message": "Updated"}
+
+@router.delete("/inventory/delete")
+def delete_inventory_snapshot(sku_id: str, warehouse_id: str, snapshot_date: str, db: Session = Depends(get_db)):
+    try:
+        stock_date = datetime.strptime(snapshot_date, "%Y-%m-%d").date()
+    except:
+        raise HTTPException(status_code=400, detail="Invalid Date Format")
+
+    existing = db.query(FactOpeningStock).filter(
+        FactOpeningStock.sku_id == sku_id,
+        FactOpeningStock.warehouse_id == warehouse_id,
+        FactOpeningStock.stock_date == stock_date
+    ).first()
+
+    if existing:
+        db.delete(existing)
+        db.commit()
+        return {"message": "Deleted"}
+    else:
+         raise HTTPException(status_code=404, detail="Record not found")
+
 def process_purchase_details_file(df: pd.DataFrame, db: Session):
     """
     Import "So_chi_tiet_mua_hang" into FactPurchases.
@@ -1029,12 +1570,39 @@ def process_purchase_details_file(df: pd.DataFrame, db: Session):
     from backend.models import FactPurchases
     count = 0
     errors = []
+
+    # 1. Normalize Header (Find header row)
+    header_found = False
+    
+    # Keywords
+    sku_keys = ['mã hàng', 'ma_hang', 'sku', 'product code', 'mã vt']
+    date_keys = ['ngày chứng từ', 'ngay_ct', 'date', 'ngay chung tu']
+    qty_keys = ['số lượng', 'so_luong', 'quantity', 'qty']
+    
+    # Try to find header row index
+    for i, row in df.head(20).iterrows():
+        row_str = [str(x).lower().strip() for x in row.values]
+        has_sku = any(k in val for k in sku_keys for val in row_str)
+        # has_date = any(k in val for k in date_keys for val in row_str) # Date might be optional or named differently
+        has_qty = any(k in val for k in qty_keys for val in row_str)
+
+        if has_sku and has_qty:
+             # Found header
+             print(f"[PURCHASE IMPORT] Found header at row {i}")
+             df.columns = df.iloc[i] # Set header
+             df = df.iloc[i+1:] # Data starts after header
+             header_found = True
+             break
+    
+    if not header_found:
+        print("[PURCHASE IMPORT] Header not found by keywords, assuming row 0.")
+
     
     df.columns = [str(c).strip() for c in df.columns]
     
     col_date = next((c for c in df.columns if 'ngày' in c.lower() and 'chứng từ' in c.lower()), None)
     col_tx = next((c for c in df.columns if 'số' in c.lower() and 'chứng từ' in c.lower()), None)
-    col_sku = next((c for c in df.columns if 'mã' in c.lower() and 'hàng' in c.lower()), None)
+    col_sku = next((c for c in df.columns if ('mã' in c.lower() and 'hàng' in c.lower()) or ('mã' in c.lower() and 'vt' in c.lower()) or 'sku' in c.lower()), None)
     
     # Actual vs Planned columns? 
     # Usually "Số lượng" is actual/stock affecting.
@@ -1139,8 +1707,12 @@ async def upload_file(
                 except:
                     df = pd.read_csv(io.BytesIO(contents), encoding='cp1252')
         elif file.filename.endswith(('.xls', '.xlsx')):
+            print(f"[IMPORT DEBUG] Processing File: {file.filename}")
+            df = pd.read_excel(io.BytesIO(contents))
+            print(f"[IMPORT DEBUG] Raw DataFrame Shape: {df.shape}")
+            print(f"[IMPORT DEBUG] First 5 rows:\n{df.head(5)}")
             try:
-                 df = pd.read_excel(io.BytesIO(contents))
+                 pass # Original df read moved above
             except Exception as e:
                  # Fallback for weird excel formats?
                  raise HTTPException(status_code=400, detail=f"Excel read error: {e}")
@@ -1218,7 +1790,8 @@ def get_products(
         query = query.filter(DimProducts.category == category)
 
     if group_id and group_id != 'ALL':
-        query = query.filter(DimProducts.group_id == group_id)
+        all_group_ids = get_recursive_group_ids(db, group_id)
+        query = query.filter(DimProducts.group_id.in_(all_group_ids))
 
         
     if unit and unit != 'ALL':
@@ -1569,8 +2142,13 @@ def download_template(type: str):
     elif type == 'warehouses':
          headers = ['warehouse_id', 'warehouse_name', 'branch_id']
     elif type == 'inventory_manual':
-         headers = ['sku', 'warehouse', 'quantity_on_hand', 'quantity_on_order', 'quantity_allocated', 'unit', 'snapshot_date', 'notes']
-         # Note: snapshot_date format YYYY-MM-DD. If empty, uses Today.
+         # Prefill Headers
+         headers = ['sku', 'warehouse', 'quantity_on_hand', 'quantity_update', 'quantity_on_order', 'quantity_allocated', 'unit', 'snapshot_date', 'notes']
+         
+         # Logic to fetch data will be handled inside generator
+    elif type == 'inventory_update':
+         headers = ['sku', 'warehouse', 'quantity_update', 'unit', 'notes']
+         # Used for Manual Override / Cycle Count
     else:
         raise HTTPException(status_code=400, detail="Unknown template type")
         
@@ -1579,91 +2157,109 @@ def download_template(type: str):
         yield '\ufeff'
         yield ','.join(headers) + '\n'
         
+        # Prefill Data logic for inventory_manual
+        if type == 'inventory_manual':
+             from backend.database import SessionLocal
+             db = SessionLocal()
+             try:
+                 # Fetch latest stock with product details
+                 records = db.query(
+                     FactOpeningStock, 
+                     DimProducts.product_name, 
+                     DimProducts.unit,
+                     DimWarehouses.warehouse_code,
+                     DimWarehouses.warehouse_name
+                 ).outerjoin(
+                     DimProducts, FactOpeningStock.sku_id == DimProducts.sku_id
+                 ).outerjoin(
+                     DimWarehouses, FactOpeningStock.warehouse_id == DimWarehouses.warehouse_id
+                 ).order_by(FactOpeningStock.sku_id).all()
+                 
+                 for r in records:
+                     item, p_name, p_unit, w_code, w_name = r
+                     # Resolve Warehouse Identifier: Prefer Code, then Name, then ID
+                     w_ident = w_code or w_name or item.warehouse_id
+                     if w_ident == 'ALL': w_ident = 'ALL' 
+                     
+                     row = [
+                         str(item.sku_id),
+                         str(w_ident),
+                         str(item.quantity),
+                         str(item.quantity_update or ''),
+                         '0', # On Order placeholder
+                         '0', # Allocated placeholder
+                         str(p_unit or item.unit or ''),
+                         str(item.stock_date),
+                         str(item.notes or '')
+                     ]
+                     # Escape commas
+                     row = [f'"{x}"' if ',' in x else x for x in row]
+                     yield ','.join(row) + '\n'
+             except Exception as e:
+                 print(f"Template Err: {e}")
+             finally:
+                 db.close()
+        
     return StreamingResponse(iter_csv(), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
 @router.post("/inventory/import")
 async def import_inventory_manual(
     file: UploadFile = File(...), 
+    type: str = Query('full', enum=['full', 'update']), # 'full' = Opening Stock, 'update' = Correction
     db: Session = Depends(get_db)
 ):
     """
-    Manual Import of Inventory Snapshots.
-    Useful for initialization or correcting specific dates.
+    Import Opening Stock or Stock Update.
+    Supports .xlsx, .xls, .csv
+    type='full': Overwrites Original Quantity (Opening Stock)
+    type='update': Updates 'quantity_update' field (Correction)
     """
-    content = await file.read()
-    try:
-        decoded = content.decode('utf-8-sig') # Handle BOM
-    except UnicodeDecodeError:
-        decoded = content.decode('latin1')
-        
-    reader = csv.DictReader(decoded.splitlines())
-    rows = list(reader)
-    count = 0
-    errors = []
+    contents = await file.read()
+    filename = file.filename.lower()
     
-    today_str = datetime.now().strftime("%Y-%m-%d")
-
-    for idx, row in enumerate(rows):
-        try:
-            sku = row.get('sku') or row.get('product_code') or row.get('code')
-            if not sku: 
-                 continue
-            
-            wh_id = row.get('warehouse') or row.get('warehouse_id') or 'ALL'
-            
-            date_str = row.get('snapshot_date') or row.get('date')
-            if not date_str:
-                snapshot_date = datetime.now().date()
-            else:
-                try:
-                    snapshot_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                except:
-                     # Fallback formats could go here
-                     snapshot_date = datetime.now().date()
-
-            qty_hand = float(row.get('quantity_on_hand') or row.get('quantity') or 0)
-            qty_order = float(row.get('quantity_on_order') or 0)
-            qty_alloc = float(row.get('quantity_allocated') or 0)
-            unit = row.get('unit') or row.get('unit_name') or ''
-            notes = row.get('notes') or "Manual Import"
-            
-            # Upsert
-            snap = db.query(FactInventorySnapshots).filter(
-                FactInventorySnapshots.snapshot_date == snapshot_date,
-                FactInventorySnapshots.warehouse_id == wh_id,
-                FactInventorySnapshots.sku_id == sku
-            ).first()
-            
-            if not snap:
-                snap = FactInventorySnapshots(
-                    snapshot_date=snapshot_date,
-                    warehouse_id=wh_id,
-                    sku_id=sku
-                )
-                db.add(snap)
-            
-            snap.quantity_on_hand = qty_hand
-            snap.quantity_on_order = qty_order
-            snap.quantity_allocated = qty_alloc
-            if unit:
-                snap.unit = unit
-            snap.notes = notes
-            
-            count += 1
-        except Exception as e:
-            errors.append(f"Row {idx+1}: {str(e)}")
-            
     try:
-        db.commit()
+        if filename.endswith(('.xlsx')):
+            df = pd.read_excel(io.BytesIO(contents), engine='openpyxl')
+        elif filename.endswith(('.xls')):
+             df = pd.read_excel(io.BytesIO(contents), engine='xlrd')
+        elif filename.endswith('.csv'):
+             # Try UTF-8 Sig first
+            try:
+                df = pd.read_csv(io.BytesIO(contents), encoding='utf-8-sig')
+            except:
+                df = pd.read_csv(io.BytesIO(contents), encoding='latin1')
+        else:
+            raise HTTPException(400, "Unsupported file format. Please use .xlsx or .csv")
+            
+        # Clean column names
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        # Call Robust Processor
+        count, errors = process_opening_stock_file(df, db, import_type=type)
+        
+        if errors and count == 0:
+             raise HTTPException(400, f"Import Failed: {'; '.join(errors[:5])}")
+             
+        return {
+            "message": f"Successfully imported {count} records (Type: {type}).",
+            "errors": errors[:10]
+        }
+        
     except Exception as e:
-        db.rollback()
-        raise HTTPException(400, f"DB Commit Error: {str(e)}")
-
-    return {
-        "message": f"Successfully imported {count} inventory records.",
-        "errors": errors[:10] # Return first 10 errors
-    }
+        import traceback
+        err_msg = traceback.format_exc()
+        print(err_msg)
+        
+        # Write to log file for debugging
+        try:
+            with open("backend_error.log", "w", encoding="utf-8") as f:
+                f.write(f"Timestamp: {datetime.now()}\n")
+                f.write(f"Error: {str(e)}\n\n")
+                f.write(err_msg)
+        except: pass
+        
+        raise HTTPException(500, f"Processing Error: {str(e)}")
 
 @router.get("/crm/config")
 def get_crm_config(db: Session = Depends(get_db)):

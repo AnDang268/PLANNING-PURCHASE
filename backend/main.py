@@ -8,7 +8,7 @@ app = FastAPI(
 )
 
 
-from backend.routers import dashboard_analytics, data_management, planning, system, vendors, planning_rolling
+from backend.routers import dashboard_analytics, data_management, planning, system, vendors, planning_rolling, debug_router
 
 app.include_router(dashboard_analytics.router)
 app.include_router(data_management.router)
@@ -16,11 +16,14 @@ app.include_router(planning.router)
 app.include_router(system.router)
 app.include_router(vendors.router)
 app.include_router(planning_rolling.router)
+app.include_router(debug_router.router)
 
 # CORS Configuration (Allow Frontend to connect)
 origins = [
     "http://localhost:3000",
     "http://localhost:8000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8000",
 ]
 
 app.add_middleware(

@@ -137,23 +137,24 @@ def export_forecast_excel(
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
-@router.get("/rolling/matrix")
-def get_rolling_matrix(
-    limit: int = 100,
-    search: str = None,
-    group_id: str = None,
-    warehouse_id: str = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Get Rolling Inventory Matrix (Pivot View).
-    """
-    engine = PlanningEngine(db)
-    try:
-        data = engine.get_rolling_inventory_matrix(limit=limit, search=search, group_id=group_id, warehouse_id=warehouse_id)
-        return data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# CONFLICT: Moved to planning_rolling.py
+# @router.get("/rolling/matrix")
+# def get_rolling_matrix(
+#     limit: int = 100,
+#     search: str = None,
+#     group_id: str = None,
+#     warehouse_id: str = None,
+#     db: Session = Depends(get_db)
+# ):
+#     """
+#     Get Rolling Inventory Matrix (Pivot View).
+#     """
+#     engine = PlanningEngine(db)
+#     try:
+#         data = engine.get_rolling_inventory_matrix(limit=limit, search=search, group_id=group_id, warehouse_id=warehouse_id)
+#         return data
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/rolling/profiles")
 def get_planning_profiles(db: Session = Depends(get_db)):

@@ -32,7 +32,7 @@ interface PeriodFilterProps {
 
 export function PeriodFilter({ onFilterChange, className }: PeriodFilterProps) {
     const currentYear = new Date().getFullYear()
-    const [year, setYear] = React.useState<string>(currentYear.toString())
+    const [year, setYear] = React.useState<string>("ALL")
     const [month, setMonth] = React.useState<string>("ALL")
     const [week, setWeek] = React.useState<string>("ALL")
     const [specificDate, setSpecificDate] = React.useState<Date | undefined>(undefined)
@@ -42,49 +42,49 @@ export function PeriodFilter({ onFilterChange, className }: PeriodFilterProps) {
 
     const triggerChange = (y: string, m: string, w: string) => {
         // Calculate Range
-        const yInt = parseInt(y)
-        if (!yInt) return
 
-        let start: Date
-        let end: Date
+        let start: Date | undefined
+        let end: Date | undefined
 
-        if (m === "ALL") {
-            // Full Year
-            start = new Date(yInt, 0, 1)
-            end = new Date(yInt, 11, 31)
+        if (y === "ALL") {
+            // All Time
+            start = undefined
+            end = undefined
         } else {
-            const mInt = parseInt(m)
-            if (w === "ALL") {
-                // Full Month
-                start = new Date(yInt, mInt, 1)
-                end = lastDayOfMonth(start)
+            const yInt = parseInt(y)
+            if (!yInt) return // Invalid
+
+            if (m === "ALL") {
+                // Full Year
+                start = new Date(yInt, 0, 1)
+                end = new Date(yInt, 11, 31)
             } else {
-                // Specific Week (1-7, 8-14, 15-21, 22-End)
-                const wInt = parseInt(w) // 1, 2, 3, 4
-                // Week 1: 1-7
-                // Week 2: 8-14
-                // Week 3: 15-21
-                // Week 4: 22-End
-                const ranges = [
-                    [1, 7],
-                    [8, 14],
-                    [15, 21],
-                    [22, 31] // 31 will be clamped by JS Date usually or logic below
-                ]
+                const mInt = parseInt(m)
+                if (w === "ALL") {
+                    // Full Month
+                    start = new Date(yInt, mInt, 1)
+                    end = lastDayOfMonth(start)
+                } else {
+                    // Specific Week (1-7, 8-14, 15-21, 22-End)
+                    const wInt = parseInt(w) // 1, 2, 3, 4
+                    const ranges = [
+                        [1, 7],
+                        [8, 14],
+                        [15, 21],
+                        [22, 31] // 31 will be clamped
+                    ]
 
-                const [dStart, dEnd] = ranges[wInt - 1]
-                start = new Date(yInt, mInt, dStart)
+                    const [dStart, dEnd] = ranges[wInt - 1]
+                    start = new Date(yInt, mInt, dStart)
 
-                // For end date, handle end of month
-                const lastDay = lastDayOfMonth(new Date(yInt, mInt, 1)).getDate()
-                const finalDay = Math.min(dEnd, lastDay)
-                end = new Date(yInt, mInt, finalDay)
+                    // For end date, handle end of month
+                    const lastDay = lastDayOfMonth(new Date(yInt, mInt, 1)).getDate()
+                    const finalDay = Math.min(dEnd, lastDay)
+                    end = new Date(yInt, mInt, finalDay)
+                }
             }
         }
 
-        // Ensure end of day for 'to' date? API treats YYYY-MM-DD usually as inclusive or start of day. 
-        // Best to send YYYY-MM-DD strings usually. Our parent expects Date objects?
-        // Let's return Date objects. Backend filters usually expect strings or we format them.
         onFilterChange({ from: start, to: end })
         setSpecificDate(undefined) // Clear specific date
     }
@@ -141,6 +141,7 @@ export function PeriodFilter({ onFilterChange, className }: PeriodFilterProps) {
                         <SelectValue placeholder="Year" />
                     </SelectTrigger>
                     <SelectContent>
+                        <SelectItem value="ALL">All Years</SelectItem>
                         {years.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}
                     </SelectContent>
                 </Select>

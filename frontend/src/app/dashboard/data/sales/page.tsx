@@ -28,11 +28,10 @@ export default function SalesPage() {
     const [page, setPage] = useState(1)
     const [search, setSearch] = useState("")
 
-    // Default to this year
-    const currentYear = new Date().getFullYear()
+    // Default to All Time
     const [dateRange, setDateRange] = useState<DateRange>({
-        from: new Date(currentYear, 0, 1),
-        to: new Date(currentYear, 11, 31)
+        from: undefined,
+        to: undefined
     })
 
     const fetchData = async () => {

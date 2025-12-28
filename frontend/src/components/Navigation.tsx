@@ -26,28 +26,43 @@ export function Navigation() {
                         <Link href="/" className={linkClass("/")}>
                             Dashboard
                         </Link>
-                        <Link href="/planning" className={linkClass("/planning")}>
-                            Planning
-                        </Link>
-                        {/* Dropdown for Data Data Management */}
                         <div className="relative group">
-                            <Link href="/dashboard/data" className={`${linkClass("/dashboard/data")} flex items-center gap-1`}>
+                            <button className={`${linkClass("/dashboard/planning")} flex items-center gap-1`}>
+                                Planning
+                            </button>
+                            <div className="absolute top-full left-0 hidden group-hover:block w-48 bg-white border shadow-lg rounded-md overflow-hidden pt-2 z-50">
+                                <Link href="/dashboard/planning/rolling" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Rolling Forecast (Matrix)</Link>
+                                <Link href="/dashboard/planning/purchase-plans" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Purchase Plans</Link>
+                                <Link href="/dashboard/planning/forecast" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Demand Forecast</Link>
+                            </div>
+                        </div>
+
+                        {/* Dropdown for Master Data */}
+                        <div className="relative group">
+                            <button className={`${linkClass("/dashboard/data")} flex items-center gap-1`}>
+                                Master Data
+                            </button>
+                            <div className="absolute top-full left-0 hidden group-hover:block w-48 bg-white border shadow-lg rounded-md overflow-hidden pt-2 z-50">
+                                <Link href="/dashboard/data/products" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Products</Link>
+                                <Link href="/dashboard/data/units" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Units</Link>
+                                <Link href="/dashboard/data/groups" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Product Groups</Link>
+                                <Link href="/dashboard/data/warehouses" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Warehouses</Link>
+                                <div className="border-t my-1"></div>
+                                <Link href="/dashboard/data/partners" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Vendors</Link>
+                                <Link href="/dashboard/data/customers" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Customers</Link>
+                                <Link href="/dashboard/data/partner-groups" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Customer Groups</Link>
+                            </div>
+                        </div>
+
+                        {/* Dropdown for Data Management (Transactions) */}
+                        <div className="relative group">
+                            <button className={`${linkClass("/dashboard/data")} flex items-center gap-1`}>
                                 Data Management
-                            </Link>
-                            <div className="absolute top-full left-0 hidden group-hover:block w-48 bg-white border shadow-lg rounded-md overflow-hidden pt-2">
-                                <Link href="/dashboard/data/products" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Products</Link>
-                                <Link href="/dashboard/data/sales" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Sales Details</Link>
-                                <Link href="/dashboard/data/purchases" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Purchase Details</Link>
-                                <div className="border-t my-1"></div>
-                                <Link href="/dashboard/data/units" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Units</Link>
-                                <Link href="/dashboard/data/groups" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Product Groups</Link>
-                                <Link href="/dashboard/data/warehouses" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Warehouses</Link>
-                                <Link href="/dashboard/data/inventory" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Inventory Snapshots</Link>
-                                <Link href="/dashboard/data/rolling-inventory" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Rolling Data</Link>
-                                <div className="border-t my-1"></div>
-                                <Link href="/dashboard/data/partners" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Vendors</Link>
-                                <Link href="/dashboard/data/customers" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Customers</Link>
-                                <Link href="/dashboard/data/partner-groups" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700">Customer Groups</Link>
+                            </button>
+                            <div className="absolute top-full left-0 hidden group-hover:block w-48 bg-white border shadow-lg rounded-md overflow-hidden pt-2 z-50">
+                                <Link href="/dashboard/data/inventory" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Opening Stock (Tồn đầu)</Link>
+                                <Link href="/dashboard/data/sales" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Sales Details</Link>
+                                <Link href="/dashboard/data/purchases" className="px-4 py-2 hover:bg-gray-100 text-sm text-gray-700 block">Purchase Details</Link>
                             </div>
                         </div>
                         <Link href="/reports" className={linkClass("/reports")}>
